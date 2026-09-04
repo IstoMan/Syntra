@@ -44,13 +44,20 @@ export function windowSeconds(windows: ReplayWindow[]): number {
   const gaps = windows
     .slice(1)
     .map((w, i) => (Date.parse(w.timestamp) - Date.parse(windows[i].timestamp)) / 1000)
-    .filter((g) => Number.isFinite(g) && g > 0)
+    .filter((g) => Number.isFinite(g) && g > 0 && g < 10 * 60)
     .sort((a, b) => a - b);
   return gaps[Math.floor(gaps.length / 2)] ?? 60;
 }
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 export function formatClock(timestamp: string): string {
-  return timestamp.slice(11, 16);
+  const parsed = Date.parse(timestamp);
+  if (Number.isNaN(parsed)) return timestamp.slice(11, 16);
+  const date = new Date(parsed);
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${WEEKDAYS[date.getDay()]} ${hh}:${mm}`;
 }
 
 function nextEpisodeStart(index: number, episodes: ReplayEpisode[]): number | null {

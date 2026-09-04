@@ -56,18 +56,14 @@ export const ForecastTimelineChart: React.FC<ForecastTimelineChartProps> = ({
     return hits;
   }, [episodes, windows, threshold, timeline.provenance.horizon_k]);
 
-  /** The single index where the capture jumps forward by hours. */
-  const gapIndex = useMemo(() => {
-    let at = -1;
-    let biggest = 0;
+  /** Day (or capture) boundaries — jumps of more than ten minutes. */
+  const gapIndices = useMemo(() => {
+    const gaps: number[] = [];
     for (let i = 1; i < n; i += 1) {
       const delta = Date.parse(windows[i].timestamp) - Date.parse(windows[i - 1].timestamp);
-      if (delta > biggest) {
-        biggest = delta;
-        at = i;
-      }
+      if (delta > 10 * 60 * 1000) gaps.push(i);
     }
-    return biggest > 10 * 60 * 1000 ? at : -1;
+    return gaps;
   }, [windows, n]);
 
   const clampThreshold = (value: number) =>
@@ -149,23 +145,23 @@ export const ForecastTimelineChart: React.FC<ForecastTimelineChartProps> = ({
         </g>
       ))}
 
-      {/* Capture discontinuity */}
-      {gapIndex > 0 && (
-        <g>
+      {/* Capture discontinuities between held-out day blocks */}
+      {gapIndices.map((at) => (
+        <g key={`gap-${at}`}>
           <line
-            x1={x(gapIndex)}
+            x1={x(at)}
             y1={PAD.top}
-            x2={x(gapIndex)}
+            x2={x(at)}
             y2={PAD.top + INNER_H}
             stroke="rgba(161,161,170,0.5)"
             strokeWidth="1"
             strokeDasharray="2 5"
           />
-          <text x={x(gapIndex) + 4} y={PAD.top + INNER_H - 6} className="fill-zinc-500 text-[9px] font-mono">
-            capture gap
+          <text x={x(at) + 4} y={PAD.top + INNER_H - 6} className="fill-zinc-500 text-[9px] font-mono">
+            {formatClock(windows[at].timestamp)}
           </text>
         </g>
-      )}
+      ))}
 
       {/* Forecast score */}
       <path d={combinedPath} fill="none" stroke="#f43f5e" strokeWidth="2" strokeLinejoin="round" />

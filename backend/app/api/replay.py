@@ -277,6 +277,15 @@ def _panel_features(frame) -> tuple[List[Dict[str, float]], List[ReplayFeatureMe
     return per_row, meta
 
 
+def _day_label(frame) -> str:
+    if "day" not in frame.columns or len(frame) == 0:
+        return ""
+    days = list(dict.fromkeys(str(d) for d in frame["day"].tolist()))
+    if len(days) == 1:
+        return days[0]
+    return "held-out later blocks (" + ", ".join(days) + ")"
+
+
 @lru_cache(maxsize=1)
 def _timeline() -> ReplayTimeline:
     import pandas as pd
@@ -289,7 +298,10 @@ def _timeline() -> ReplayTimeline:
             detail="Missing timeline.parquet. Run `python -m syntra.evaluate` in ai/ first.",
         )
 
-    frame = pd.read_parquet(parquet).reset_index(drop=True)
+    frame = pd.read_parquet(parquet)
+    if "timestamp" in frame.columns:
+        frame = frame.sort_values("timestamp")
+    frame = frame.reset_index(drop=True)
     metrics = _read_json(root / "metrics.json")
     tuned = _read_json(root / "threshold.json")
     shap = _read_json(root / "shap_world.json")
@@ -324,7 +336,7 @@ def _timeline() -> ReplayTimeline:
             dataset=str(protocol.get("data_source", "unknown")),
             real_traces=bool(protocol.get("real_cic_traces", False)),
             split=str(protocol.get("split", "")),
-            day=str(frame["day"].iloc[0]) if len(frame) else "",
+            day=_day_label(frame),
             window_seconds=int(protocol.get("window_seconds", 30)),
             horizon_k=horizon_k,
             tuned_threshold=float(tuned.get("threshold", 0.5)),

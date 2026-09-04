@@ -31,7 +31,7 @@ function percent(value: number): string {
 export const ForecastReplayPage: React.FC = () => {
   const [timeline, setTimeline] = useState<ReplayTimeline | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [threshold, setThreshold] = useState(0.8);
+  const [threshold, setThreshold] = useState(0.9);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(4);
