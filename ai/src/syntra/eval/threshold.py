@@ -18,9 +18,10 @@ def tune_threshold(
     families: np.ndarray,
     scores_all_k: np.ndarray,
     window_seconds: int,
-    fpr_cap: float = 0.01,
+    fpr_cap: float = 0.03,
     merge_gap: int = 2,
     min_length: int = 2,
+    timestamps: np.ndarray | None = None,
 ) -> dict:
     y_future_k1 = np.asarray(y_future_k1)
     scores_k1 = np.asarray(scores_k1)
@@ -41,6 +42,7 @@ def tune_threshold(
             window_seconds,
             merge_gap=merge_gap,
             min_length=min_length,
+            timestamps=timestamps,
         )
         summary = summarize_leads(leads)
         candidates.append(

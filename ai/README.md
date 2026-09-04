@@ -9,16 +9,16 @@ The model learns how a compact windowed state evolves, rolls it forward `K` step
 | Choice | Value |
 | --- | --- |
 | Dataset | CIC-IDS2017 (official CSVs in `data/raw/cicids2017` if present, otherwise a schedule-faithful synthetic week) |
-| Grain | 30-second flow aggregates, 40-dim state, no packet Transformer |
-| Horizon | `K = 5` (2.5 minutes) with 8-window history |
-| Split | Time: Mon–Wed train, Thu val, Fri test. Never shuffle rows across time |
+| Grain | 30-second flow aggregates on a regular calendar (empty bins filled), 40-dim state |
+| Horizon | `K = 5` (2.5 minutes) with 32-window history |
+| Split | Purged family-blocked time (per-day train/val/test, never shuffled). Earliest episode of each family except infiltration is in train |
 | Unseen family | `infiltration` excluded from train targets |
-| Model | Encoder + GRU dynamics + reconstruction + heads on rolled-out states |
+| Model | Residual encoder + Transformer history + stacked residual GRU dynamics; heads on rolled-out states |
 | Baselines | Logistic Regression and XGBoost on the **current** window |
 | UI | Streamlit replay + F1@k + lead time + SHAP/gradients |
 
 - Score: combined = max(attack-head probability, novelty of predicted future state vs a train-benign cloud)
-- Threshold: tuned on Thursday val to maximize episode catch rate with FPR ≤ 1%
+- Threshold: tuned on val to maximize episode catch rate with FPR ≤ 3%
 
 ## Run
 

@@ -13,8 +13,11 @@ from syntra.data.cicids2017 import load_cicids2017_flows, windows_from_flows
 from syntra.data.schema import STATE_FEATURES
 from syntra.data.synthetic import generate_windows
 from syntra.eval.protocol import (
+    REQUIRED_TRAIN_FAMILIES,
     assert_time_split_strategy,
+    assign_purged_family_blocked_splits,
     assign_split,
+    attack_episodes,
     windows_frame_with_future,
 )
 from syntra.taxonomy import family_from_cic_label
@@ -38,11 +41,21 @@ def downsample_benign_flows(
 def attach_splits(windows: pd.DataFrame, cfg: SyntraConfig) -> pd.DataFrame:
     assert_time_split_strategy(cfg.splits.strategy)
     windows = windows.copy()
-    windows["split"] = windows["day"].map(
-        lambda d: assign_split(
-            d, cfg.splits.train_days, cfg.splits.val_days, cfg.splits.test_days
+    if cfg.splits.strategy == "purged_family_blocked":
+        windows = assign_purged_family_blocked_splits(
+            windows,
+            horizon_k=cfg.windows.horizon_k,
+            history_len=cfg.windows.history_len,
+            unseen_family=cfg.dataset.unseen_attack_family,
+            train_frac=cfg.splits.train_frac,
+            val_frac=cfg.splits.val_frac,
         )
-    )
+    else:
+        windows["split"] = windows["day"].map(
+            lambda d: assign_split(
+                d, cfg.splits.train_days, cfg.splits.val_days, cfg.splits.test_days
+            )
+        )
     unseen = cfg.dataset.unseen_attack_family
     windows["is_unseen_family"] = windows["family"] == unseen
     # Unseen family must not appear as a training *target*. Keep precursor benign context.
@@ -50,6 +63,59 @@ def attach_splits(windows: pd.DataFrame, cfg: SyntraConfig) -> pd.DataFrame:
         (windows["split"] == "train") & windows["is_unseen_family"]
     )
     return windows
+
+
+def _neighborhood_mask(
+    group: pd.DataFrame, families: set[str], pad: int
+) -> np.ndarray:
+    ordered = group.sort_values("window_idx").reset_index(drop=True)
+    y = ordered["y_attack"].to_numpy()
+    fam = ordered["family"].to_numpy()
+    keep = np.zeros(len(ordered), dtype=bool)
+    for start, end, family in attack_episodes(y, fam):
+        if str(family) not in families:
+            continue
+        lo = max(0, start - pad)
+        keep[lo : end + 1] = True
+    return keep
+
+
+def mix_synthetic_family_coverage(
+    windows: pd.DataFrame, cfg: SyntraConfig, source: str
+) -> pd.DataFrame:
+    """Inject synthetic precursor campaigns for families missing from real-CIC train."""
+    if source != "cicids2017":
+        return windows
+    train_fams = set(
+        windows.loc[(windows["split"] == "train") & (windows["y_attack"] == 1), "family"]
+        .astype(str)
+        .tolist()
+    )
+    missing = set(REQUIRED_TRAIN_FAMILIES) - train_fams - {
+        cfg.dataset.unseen_attack_family
+    }
+    if not missing:
+        return windows
+    synth = generate_windows(seed=cfg.train.seed)
+    synth = attach_splits(synth, cfg)
+    pad = cfg.windows.history_len + cfg.windows.horizon_k
+    pieces = [windows]
+    for day, group in synth.groupby("day", sort=False):
+        mask = _neighborhood_mask(group, missing, pad)
+        if not mask.any():
+            continue
+        extra = group.sort_values("window_idx").reset_index(drop=True).loc[mask].copy()
+        extra = extra[extra["family"].isin(missing | {"benign"})]
+        if extra.empty:
+            continue
+        extra["day"] = f"synth_{day}"
+        extra["source"] = "synthetic_coverage"
+        extra["window_idx"] = np.arange(len(extra), dtype=np.int64)
+        extra["split"] = "train"
+        extra["is_unseen_family"] = extra["family"] == cfg.dataset.unseen_attack_family
+        extra["train_eligible"] = ~extra["is_unseen_family"]
+        pieces.append(extra)
+    return pd.concat(pieces, ignore_index=True)
 
 
 def build_sequences(windows: pd.DataFrame, cfg: SyntraConfig) -> pd.DataFrame:
@@ -62,14 +128,18 @@ def build_sequences(windows: pd.DataFrame, cfg: SyntraConfig) -> pd.DataFrame:
         feats = group[feat_cols].to_numpy(dtype=np.float32)
         n = len(group)
         for t in range(h - 1, n - k):
+            row = group.iloc[t]
+            if row["split"] not in ("train", "val", "test"):
+                continue
+            if row["split"] == "train" and not row["train_eligible"]:
+                continue
             history = feats[t - h + 1 : t + 1]
             future = feats[t + 1 : t + 1 + k]
             y_future = group.loc[t + 1 : t + k, "y_attack"].to_numpy()
             fam_future = group.loc[t + 1 : t + k, "family_id"].to_numpy()
             stg_future = group.loc[t + 1 : t + k, "stage_id"].to_numpy()
-            row = group.iloc[t]
-            if row["split"] == "train" and not row["train_eligible"]:
-                continue
+            y_any = int(y_future.max() > 0)
+            is_precursor = int(row["y_attack"] == 0 and y_any == 1)
             records.append(
                 {
                     "day": day,
@@ -83,7 +153,8 @@ def build_sequences(windows: pd.DataFrame, cfg: SyntraConfig) -> pd.DataFrame:
                     "y_future": y_future.astype(int).tolist(),
                     "family_future": fam_future.astype(int).tolist(),
                     "stage_future": stg_future.astype(int).tolist(),
-                    "y_any_future": int(y_future.max() > 0),
+                    "y_any_future": y_any,
+                    "is_precursor": is_precursor,
                     "is_unseen_family": bool(row["is_unseen_family"]),
                     "state": history[-1].tolist(),
                 }
@@ -105,7 +176,10 @@ def prepare_dataset(cfg: SyntraConfig) -> dict[str, str]:
             "n_flows_raw": n_flows_raw,
             "benign_downsampled": False,
             "benign_keep_frac": 1.0,
-            "note": "Real CIC-IDS2017 traces. Friday is Bot/PortScan/DDoS; PortScan and Bot are unseen in train.",
+            "note": (
+                "Real CIC-IDS2017 traces. Purged family-blocked split with synthetic "
+                "coverage for families missing from train; infiltration held out of train targets."
+            ),
         }
     else:
         windows = generate_windows(seed=cfg.train.seed)
@@ -114,6 +188,7 @@ def prepare_dataset(cfg: SyntraConfig) -> dict[str, str]:
         windows.to_parquet(cfg.dataset.synthetic_dir / "windows.parquet", index=False)
 
     windows = attach_splits(windows, cfg)
+    windows = mix_synthetic_family_coverage(windows, cfg, source)
     windows = windows_frame_with_future(windows, cfg.windows.horizon_k)
     train_mask = windows["split"].eq("train") & windows["train_eligible"]
     scaler = {}
@@ -134,6 +209,18 @@ def prepare_dataset(cfg: SyntraConfig) -> dict[str, str]:
             "No forecast sequences were built. Need at least "
             f"{cfg.windows.history_len + cfg.windows.horizon_k} windows per day."
         )
+    train_fams = sorted(
+        set(
+            windows.loc[
+                (windows["split"] == "train")
+                & windows["train_eligible"]
+                & (windows["y_attack"] == 1),
+                "family",
+            ]
+            .astype(str)
+            .tolist()
+        )
+    )
     meta = {
         "source": source,
         "n_windows": int(len(windows)),
@@ -143,6 +230,8 @@ def prepare_dataset(cfg: SyntraConfig) -> dict[str, str]:
         "history_len": cfg.windows.history_len,
         "state_features": list(STATE_FEATURES),
         "splits": sequences["split"].value_counts().to_dict(),
+        "split_strategy": cfg.splits.strategy,
+        "train_families": train_fams,
         "unseen_attack_family": cfg.dataset.unseen_attack_family,
         "protocol": "future_labels_only",
         **extra_meta,

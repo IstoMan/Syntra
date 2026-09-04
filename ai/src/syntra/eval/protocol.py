@@ -8,13 +8,18 @@ import numpy as np
 import pandas as pd
 
 ALLOWED_SPLITS = frozenset({"train", "val", "test"})
+ALLOWED_STRATEGIES = frozenset({"time", "purged_family_blocked"})
+DAY_ORDER = ("monday", "tuesday", "wednesday", "thursday", "friday")
+REQUIRED_TRAIN_FAMILIES = frozenset(
+    {"brute_force", "dos", "web", "botnet", "portscan", "heartbleed"}
+)
 
 
 def assert_time_split_strategy(strategy: str) -> None:
-    if strategy != "time":
+    if strategy not in ALLOWED_STRATEGIES:
         raise ValueError(
-            f"Split strategy must be 'time' (got {strategy!r}). "
-            "Random row shuffles turn forecasting into detection."
+            f"Split strategy must be one of {sorted(ALLOWED_STRATEGIES)} "
+            f"(got {strategy!r}). Random row shuffles turn forecasting into detection."
         )
 
 
@@ -29,6 +34,128 @@ def assign_split(
     if key in test_days:
         return "test"
     raise ValueError(f"Day {day!r} is not in train/val/test day lists.")
+
+
+def _block_edges(
+    n: int, horizon_k: int, train_frac: float, val_frac: float
+) -> tuple[int, int, int, int]:
+    train_end = max(1, int(n * train_frac))
+    val_start = min(n, train_end + max(horizon_k, 1))
+    val_end = min(n, val_start + max(1, int(n * val_frac)))
+    test_start = min(n, val_end + max(horizon_k, 1))
+    return train_end, val_start, val_end, test_start
+
+
+def _split_for_index(
+    i: int, train_end: int, val_start: int, val_end: int, test_start: int
+) -> str:
+    if i < train_end:
+        return "train"
+    if i < val_start:
+        return "purge"
+    if i < val_end:
+        return "val"
+    if i < test_start:
+        return "purge"
+    return "test"
+
+
+def _snap_purge(
+    i: int, train_end: int, val_start: int, val_end: int, test_start: int
+) -> str:
+    assigned = _split_for_index(i, train_end, val_start, val_end, test_start)
+    if assigned != "purge":
+        return assigned
+    if i < val_start:
+        return "val"
+    return "test"
+
+
+def _assign_span(
+    split_labels: np.ndarray, start: int, end: int, label: str
+) -> None:
+    lo = max(0, start)
+    hi = min(len(split_labels) - 1, end)
+    if lo > hi:
+        return
+    split_labels[lo : hi + 1] = label
+
+
+def assign_purged_family_blocked_splits(
+    windows: pd.DataFrame,
+    horizon_k: int,
+    history_len: int,
+    unseen_family: str = "infiltration",
+    train_frac: float = 0.55,
+    val_frac: float = 0.15,
+) -> pd.DataFrame:
+    """Per-day chronological blocks with a horizon purge, then family coverage.
+
+    Never shuffles. Attack episodes plus `history_len + horizon_k` precursor
+    windows are assigned wholly to the onset block so a forecast horizon cannot
+    straddle train→test. If a required family would otherwise be missing from
+    train, its earliest episode is pulled into train; later episodes stay out.
+    """
+    out = windows.copy().reset_index(drop=True)
+    out["split"] = "purge"
+    pad = int(history_len + horizon_k)
+    day_local: dict[str, list[int]] = {}
+    day_edges: dict[str, tuple[int, int, int, int]] = {}
+
+    for day, group in out.groupby("day", sort=False):
+        key = str(day).strip().lower()
+        ordered = group.sort_values("window_idx")
+        positions = ordered.index.to_numpy()
+        n = len(positions)
+        if n == 0:
+            continue
+        edges = _block_edges(n, horizon_k, train_frac, val_frac)
+        day_local[key] = list(positions)
+        day_edges[key] = edges
+        labels = np.array(
+            [_split_for_index(i, *edges) for i in range(n)], dtype=object
+        )
+        y = ordered["y_attack"].to_numpy()
+        fam = ordered["family"].to_numpy()
+        for start, end, _family in attack_episodes(y, fam):
+            onset_split = _snap_purge(start, *edges)
+            _assign_span(labels, start - pad, end, onset_split)
+        out.loc[positions, "split"] = labels
+
+    train_families = set(
+        out.loc[(out["split"] == "train") & (out["y_attack"] == 1), "family"]
+        .astype(str)
+        .tolist()
+    )
+    missing = REQUIRED_TRAIN_FAMILIES - train_families - {unseen_family}
+    ordered_days = [d for d in DAY_ORDER if d in day_local]
+    extra = [d for d in day_local if d not in ordered_days]
+    for family in sorted(missing):
+        found: tuple[str, int, int] | None = None
+        for day in ordered_days + extra:
+            positions = day_local[day]
+            ordered = out.loc[positions].sort_values("window_idx")
+            y = ordered["y_attack"].to_numpy()
+            fam = ordered["family"].to_numpy()
+            local_pos = ordered.index.to_numpy()
+            for start, end, ep_fam in attack_episodes(y, fam):
+                if str(ep_fam) != family:
+                    continue
+                found = (day, start, end)
+                break
+            if found is not None:
+                break
+        if found is None:
+            continue
+        day, start, end = found
+        positions = np.array(day_local[day])
+        ordered = out.loc[positions].sort_values("window_idx")
+        local_pos = ordered.index.to_numpy()
+        labels = out.loc[local_pos, "split"].to_numpy(dtype=object).copy()
+        _assign_span(labels, start - pad, end, "train")
+        out.loc[local_pos, "split"] = labels
+
+    return out
 
 
 def future_attack_matrix(current_attack: np.ndarray, horizon_k: int) -> np.ndarray:
@@ -115,6 +242,19 @@ def merge_attack_episodes(
     return [(s, e, f) for s, e, f in merged if (e - s + 1) >= min_length]
 
 
+def _lead_seconds(
+    start: int,
+    alert_index: int,
+    window_seconds: int,
+    timestamps: np.ndarray | None,
+) -> float:
+    if timestamps is None:
+        return float((start - alert_index) * window_seconds)
+    ts = pd.to_datetime(np.asarray(timestamps))
+    delta = ts[start] - ts[alert_index]
+    return float(delta / np.timedelta64(1, "s"))
+
+
 def lead_time_from_future_probs(
     current_attack: np.ndarray,
     families: np.ndarray,
@@ -123,11 +263,13 @@ def lead_time_from_future_probs(
     window_seconds: int,
     merge_gap: int = 0,
     min_length: int = 1,
+    timestamps: np.ndarray | None = None,
 ) -> list[EpisodeLead]:
     """Lead time counts only alerts fired on k>=1 *before* the episode starts.
 
     future_probs[t, k] = P(attack at t+k+1). An alert at t is valid for an
     episode starting at s if some k satisfies t+k+1 in [s, e] and t < s.
+    When `timestamps` is provided, lead seconds use wall-clock gaps.
     """
     if future_probs.ndim != 2:
         raise ValueError("future_probs must be [T, K] with K>=1")
@@ -161,7 +303,7 @@ def lead_time_from_future_probs(
                     family,
                     alert_index,
                     lead_w,
-                    float(lead_w * window_seconds),
+                    _lead_seconds(start, alert_index, window_seconds, timestamps),
                     True,
                 )
             )
@@ -233,6 +375,14 @@ def summarize_leads(leads: list[EpisodeLead]) -> dict[str, float]:
         "mean_lead_seconds": float(leads_s.mean()),
         "median_lead_seconds": float(np.median(leads_s)),
         "mean_lead_windows": float(leads_w.mean()),
+    }
+
+
+def summarize_leads_by_family(leads: list[EpisodeLead]) -> dict[str, dict[str, float]]:
+    families = sorted({item.family for item in leads})
+    return {
+        family: summarize_leads([item for item in leads if item.family == family])
+        for family in families
     }
 
 

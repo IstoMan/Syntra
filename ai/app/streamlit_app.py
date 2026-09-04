@@ -65,8 +65,9 @@ def main() -> None:
     )
     if real:
         st.info(
-            "Metrics are from **real CIC-IDS2017 traces**. Friday test is Bot, PortScan, and DDoS "
-            "(PortScan/Bot are Friday-only families; catch relies on novelty + DoS transfer)."
+            "Metrics use a **purged family-blocked** split on CIC-IDS2017. "
+            "Train includes the earliest episode of each family except infiltration; "
+            "later blocks (including later Friday campaigns) are held out."
         )
     else:
         st.warning(
@@ -90,7 +91,7 @@ def main() -> None:
 - Score: **max(attack-head P, benign-cloud novelty of predicted states)**
 - Lead time: earliest alert **before** the campaign starts, using future-horizon probabilities only
 - Campaigns: same-family runs with gaps ≤ `{proto.get("episode_merge_gap", 2)}` windows, min length `{proto.get("episode_min_length", 2)}` (raw 1-window flickers kept in JSON)
-- Threshold: `{proto["alert_threshold"]:.3f}` (val-tuned on Thursday benign FPR cap `{proto.get("fpr_cap", 0.01)}`, novelty gate `{proto.get("novelty_gate", 0.55)}`)
+- Threshold: `{proto["alert_threshold"]:.3f}` (val-tuned benign FPR cap `{proto.get("fpr_cap", 0.03)}`, novelty gate `{proto.get("novelty_gate", 0.45)}`, temperature `{proto.get("temperature", 1.0):.2f}`)
             """
         )
 

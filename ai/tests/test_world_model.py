@@ -21,7 +21,7 @@ def test_rollout_heads_are_on_future_steps_only():
     assert not torch.allclose(out["future_states"], last)
 
 
-def test_two_layer_gru_accepts_longer_history():
+def test_stacked_dynamics_accepts_longer_history():
     model = NetworkWorldModel(
         state_dim=40, embed_dim=32, hidden_dim=32, num_layers=2, dropout=0.1
     )

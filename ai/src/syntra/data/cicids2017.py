@@ -231,4 +231,44 @@ def windows_from_flows(flows: pd.DataFrame, window_seconds: int) -> pd.DataFrame
     missing = [c for c in STATE_FEATURES if c not in frame.columns]
     if missing:
         raise RuntimeError(f"Window frame missing features: {missing}")
-    return frame
+    return regrid_windows(frame, window_seconds)
+
+
+def regrid_windows(frame: pd.DataFrame, window_seconds: int) -> pd.DataFrame:
+    """Fill missing 30s bins with zero-traffic benign states so step k is wall-clock."""
+    pieces: list[pd.DataFrame] = []
+    for day, group in frame.groupby("day", sort=False):
+        group = group.sort_values("timestamp").drop_duplicates("timestamp")
+        if group.empty:
+            continue
+        start = pd.Timestamp(group["timestamp"].min())
+        end = pd.Timestamp(group["timestamp"].max())
+        calendar = pd.date_range(start, end, freq=f"{int(window_seconds)}s")
+        group = group.set_index("timestamp").reindex(calendar)
+        group.index.name = "timestamp"
+        group["day"] = str(day).lower()
+        source = group["source"].dropna()
+        group["source"] = group["source"].fillna(
+            source.iloc[0] if len(source) else "cicids2017"
+        )
+        group["family"] = group["family"].fillna("benign")
+        for col in STATE_FEATURES:
+            if col in group.columns:
+                group[col] = group[col].fillna(0.0)
+            else:
+                group[col] = 0.0
+        group["y_attack"] = (group["family"] != "benign").astype(int)
+        group["family_id"] = group["family"].map(family_id)
+        group["stage"] = group["family"].map(stage_from_family)
+        group["stage_id"] = group["stage"].map(stage_id)
+        group = group.reset_index()
+        group["window_idx"] = np.arange(len(group), dtype=np.int64)
+        prev = group["unique_dst_ips"].shift(1)
+        group["new_dst_ip_rate"] = (
+            (group["unique_dst_ips"] - prev.fillna(group["unique_dst_ips"])).abs()
+            / prev.fillna(1.0).clip(lower=1.0)
+        ).clip(upper=1.5)
+        pieces.append(group)
+    if not pieces:
+        return frame
+    return pd.concat(pieces, ignore_index=True)

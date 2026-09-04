@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from syntra.data.cicids2017 import load_cicids2017_flows, windows_from_flows
+from syntra.data.cicids2017 import load_cicids2017_flows, regrid_windows, windows_from_flows
 from syntra.data.prepare import downsample_benign_flows
 from syntra.data.schema import STATE_FEATURES
 from syntra.taxonomy import family_from_cic_label
@@ -39,6 +39,9 @@ def test_loader_handles_inf_nan_spaces_and_filename_day(tmp_path: Path):
     assert windows["source"].eq("cicids2017").all()
     assert windows["family"].isin(["benign", "portscan"]).all()
     assert len(windows) >= 1
+    gaps = windows["timestamp"].sort_values().diff().dropna()
+    if len(gaps) > 0:
+        assert (gaps.dt.total_seconds() == 30).all()
 
 
 def test_downsample_keeps_every_attack_row():
@@ -51,3 +54,25 @@ def test_downsample_keeps_every_attack_row():
     out = downsample_benign_flows(flows, frac=0.1, seed=0)
     assert (out["label"] == "DoS Hulk").sum() == 7
     assert (out["label"] == "BENIGN").sum() == 10
+
+
+def test_regrid_inserts_regular_empty_bins():
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2017-07-07 09:00:00", "2017-07-07 09:01:00"]),
+            "day": ["friday", "friday"],
+            "family": ["benign", "portscan"],
+            "source": ["cicids2017", "cicids2017"],
+            **{c: [1.0, 2.0] for c in STATE_FEATURES},
+            "y_attack": [0, 1],
+            "family_id": [0, 6],
+            "stage": ["none", "reconnaissance"],
+            "stage_id": [0, 1],
+        }
+    )
+    out = regrid_windows(frame, 30)
+    assert len(out) == 3
+    gaps = out["timestamp"].sort_values().diff().dropna().dt.total_seconds()
+    assert (gaps == 30).all()
+    assert out["y_attack"].tolist() == [0, 0, 1]
+    assert out.loc[out["y_attack"] == 0, "flow_count"].iloc[1] == 0.0

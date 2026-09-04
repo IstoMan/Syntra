@@ -9,11 +9,13 @@ import pandas as pd
 import torch
 
 from syntra.config import load_config
+from syntra.eval.calibrate import apply_temperature, fit_temperature
 from syntra.eval.protocol import (
     classification_at_horizon,
     expected_calibration_error,
     lead_time_from_future_probs,
     summarize_leads,
+    summarize_leads_by_family,
 )
 from syntra.eval.threshold import tune_threshold
 from syntra.explain import shap_xgboost, world_model_gradients
@@ -54,25 +56,40 @@ def _episode_rows(leads) -> list[dict]:
     ]
 
 
-def _wm_predict(model, frame, device) -> dict[str, np.ndarray]:
-    histories = torch.tensor(
-        np.stack([as_array(h, np.float32) for h in frame["history"]]),
-        dtype=torch.float32,
-        device=device,
-    )
+def _wm_predict(
+    model, frame, device, temperature: float = 1.0, batch_size: int = 64
+) -> dict[str, np.ndarray]:
+    if len(frame) == 0:
+        empty_atk = np.zeros((0, 5), dtype=np.float64)
+        return {
+            "attack": empty_atk,
+            "attack_logits": empty_atk,
+            "family": np.zeros((0, 5, 8), dtype=np.float32),
+            "stage": np.zeros((0, 5, 6), dtype=np.float32),
+            "recon": np.zeros((0, 5, 40), dtype=np.float32),
+            "attn": np.zeros((0, 1), dtype=np.float32),
+        }
+    histories = np.stack([as_array(h, np.float32) for h in frame["history"]])
+    attack_logits, family, stage, recon, attn = [], [], [], [], []
     with torch.no_grad():
-        out = model(histories, future=None, teacher_forcing=0.0)
-    attack = torch.sigmoid(out["attack_logits"]).cpu().numpy()
-    family = torch.softmax(out["family_logits"], dim=-1).cpu().numpy()
-    stage = torch.softmax(out["stage_logits"], dim=-1).cpu().numpy()
-    recon = out["future_states"].cpu().numpy()
-    attn = out["history_attn"].cpu().numpy()
+        for i in range(0, len(histories), batch_size):
+            x = torch.tensor(
+                histories[i : i + batch_size], dtype=torch.float32, device=device
+            )
+            out = model(x, future=None, teacher_forcing=0.0)
+            attack_logits.append(out["attack_logits"].cpu().numpy())
+            family.append(torch.softmax(out["family_logits"], dim=-1).cpu().numpy())
+            stage.append(torch.softmax(out["stage_logits"], dim=-1).cpu().numpy())
+            recon.append(out["future_states"].cpu().numpy())
+            attn.append(out["history_attn"].cpu().numpy())
+    logits = np.concatenate(attack_logits, axis=0)
     return {
-        "attack": attack,
-        "family": family,
-        "stage": stage,
-        "recon": recon,
-        "attn": attn,
+        "attack": apply_temperature(logits, temperature),
+        "attack_logits": logits,
+        "family": np.concatenate(family, axis=0),
+        "stage": np.concatenate(stage, axis=0),
+        "recon": np.concatenate(recon, axis=0),
+        "attn": np.concatenate(attn, axis=0),
     }
 
 
@@ -105,18 +122,29 @@ def evaluate(cfg, artifacts: Path) -> dict:
     cloud.save(artifacts / "benign_cloud.joblib")
     novelty_gate = float(cfg.eval.novelty_gate)
 
-    def _score_leads(y_cur, families, scores, threshold, merged: bool):
+    val_raw = _wm_predict(model, val_seq, device, temperature=1.0)
+    y_val_future = np.stack(
+        [as_array(v, np.int64).reshape(-1) for v in val_seq["y_future"]]
+    )
+    temperature = fit_temperature(val_raw["attack_logits"], y_val_future)
+    dump_json(artifacts / "temperature.json", {"temperature": temperature})
+
+    def _timestamps(seq: pd.DataFrame) -> np.ndarray:
+        return pd.to_datetime(seq["timestamp"]).to_numpy()
+
+    def _score_leads(y_cur, families, scores, threshold, merged: bool, seq):
         return lead_time_from_future_probs(
             y_cur,
             families,
             scores,
             threshold,
             cfg.windows.size_seconds,
+            timestamps=_timestamps(seq),
             **_lead_kwargs(merged),
         )
 
     def pack(seq: pd.DataFrame, threshold: float) -> dict:
-        wm = _wm_predict(model, seq, device)
+        wm = _wm_predict(model, seq, device, temperature=temperature)
         novelty = cloud.probability(wm["recon"])
         combined = combined_score(wm["attack"], novelty, novelty_gate=novelty_gate)
         x, y_cur = current_window_xy(seq)
@@ -166,14 +194,14 @@ def evaluate(cfg, artifacts: Path) -> dict:
         )
         families = _families(seq)
         y_cur = seq["y_current"].to_numpy()
-        leads = _score_leads(y_cur, families, combined, threshold, merged=True)
-        leads_raw = _score_leads(y_cur, families, combined, threshold, merged=False)
-        attack_leads = _score_leads(y_cur, families, wm["attack"], threshold, merged=True)
+        leads = _score_leads(y_cur, families, combined, threshold, True, seq)
+        leads_raw = _score_leads(y_cur, families, combined, threshold, False, seq)
+        attack_leads = _score_leads(y_cur, families, wm["attack"], threshold, True, seq)
         attack_leads_raw = _score_leads(
-            y_cur, families, wm["attack"], threshold, merged=False
+            y_cur, families, wm["attack"], threshold, False, seq
         )
-        xgb_leads = _score_leads(y_cur, families, naive_xgb, threshold, merged=True)
-        xgb_leads_raw = _score_leads(y_cur, families, naive_xgb, threshold, merged=False)
+        xgb_leads = _score_leads(y_cur, families, naive_xgb, threshold, True, seq)
+        xgb_leads_raw = _score_leads(y_cur, families, naive_xgb, threshold, False, seq)
         fam_pred = wm["family"].argmax(axis=-1)
         stg_pred = wm["stage"].argmax(axis=-1)
         fam_true = np.stack(
@@ -191,6 +219,7 @@ def evaluate(cfg, artifacts: Path) -> dict:
             "lead_attack_head_raw": summarize_leads(attack_leads_raw),
             "lead_xgb_naive": summarize_leads(xgb_leads),
             "lead_xgb_naive_raw": summarize_leads(xgb_leads_raw),
+            "lead_by_family": summarize_leads_by_family(leads),
             "family_acc_future": float((fam_pred == fam_true).mean()),
             "stage_acc_future": float((stg_pred == stg_true).mean()),
             "wm": wm,
@@ -213,6 +242,7 @@ def evaluate(cfg, artifacts: Path) -> dict:
         val_probe["combined"],
         cfg.windows.size_seconds,
         fpr_cap=cfg.eval.fpr_cap,
+        timestamps=_timestamps(val_probe["seq"]),
     )
     dump_json(artifacts / "threshold.json", tuned)
     threshold = float(tuned["threshold"])
@@ -280,6 +310,7 @@ def evaluate(cfg, artifacts: Path) -> dict:
             "episodes_raw": _episode_rows(test_pack["leads_raw"]),
             "summary": test_pack["lead_world_model"],
             "summary_raw": test_pack["lead_world_model_raw"],
+            "by_family": test_pack["lead_by_family"],
         },
     )
 
@@ -297,20 +328,25 @@ def evaluate(cfg, artifacts: Path) -> dict:
         "protocol": {
             "label": "Y[t,k] = attack at t+k, k>=1. Current-window labels are detection-only.",
             "split": (
-                "time: train Mon-Wed, val Thu, test Fri"
+                "purged family-blocked time: per-day train/val/test with horizon purge; "
+                "earliest episode of each family (except infiltration) is in train; "
+                "later blocks held out"
                 + (
-                    " (real CIC Friday: Bot, PortScan, DDoS)"
+                    " (real CIC traces; Friday later blocks are headline test)"
                     if real_traces
-                    else " (synthetic Friday replays scan/DoS/botnet)"
+                    else " (synthetic week with forecastable precursor ramps)"
                 )
             ),
+            "split_strategy": cfg.splits.strategy,
             "data_source": data_source,
             "real_cic_traces": real_traces,
             "unseen_attack_family": cfg.dataset.unseen_attack_family,
             "window_seconds": cfg.windows.size_seconds,
             "horizon_k": cfg.windows.horizon_k,
+            "history_len": cfg.windows.history_len,
             "alert_threshold": threshold,
             "threshold_source": "val_tuned_combined_benign_fpr",
+            "temperature": temperature,
             "fpr_cap": cfg.eval.fpr_cap,
             "novelty_gate": novelty_gate,
             "episode_merge_gap": LEAD_MERGE_GAP,
@@ -327,6 +363,7 @@ def evaluate(cfg, artifacts: Path) -> dict:
             "lead_attack_head_raw": test_pack["lead_attack_head_raw"],
             "lead_xgb_naive": test_pack["lead_xgb_naive"],
             "lead_xgb_naive_raw": test_pack["lead_xgb_naive_raw"],
+            "lead_by_family": test_pack["lead_by_family"],
             "family_acc_future": test_pack["family_acc_future"],
             "stage_acc_future": test_pack["stage_acc_future"],
         },
@@ -335,6 +372,7 @@ def evaluate(cfg, artifacts: Path) -> dict:
             "lead_world_model": val_pack["lead_world_model"],
             "lead_world_model_raw": val_pack["lead_world_model_raw"],
             "lead_attack_head": val_pack["lead_attack_head"],
+            "lead_by_family": val_pack["lead_by_family"],
             "family_acc_future": val_pack["family_acc_future"],
             "stage_acc_future": val_pack["stage_acc_future"],
         },

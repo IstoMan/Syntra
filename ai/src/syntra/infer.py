@@ -16,7 +16,7 @@ from syntra.models.novelty import BenignCloud, combined_score
 from syntra.taxonomy import ATTACK_FAMILIES, ATTACK_STAGES, FAMILY_TO_MITRE, FAMILY_TO_STAGE
 from syntra.train import load_world_model
 
-MODEL_ARCHITECTURE = "GRU world model (K=5)"
+MODEL_ARCHITECTURE = "Transformer+GRU world model (K=5)"
 
 STAGE_DISPLAY: dict[str, str] = {
     "none": "Normal",
@@ -94,6 +94,7 @@ class InferRuntime:
     device: torch.device
     artifacts_dir: Path
     has_novelty: bool = False
+    temperature: float = 1.0
 
 
 @dataclass
@@ -218,6 +219,14 @@ def load_threshold(artifacts: Path, default: float = 0.5) -> float:
     return float(payload.get("threshold", default))
 
 
+def load_temperature(artifacts: Path, default: float = 1.0) -> float:
+    path = artifacts / "temperature.json"
+    if not path.is_file():
+        return default
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return float(payload.get("temperature", default))
+
+
 def pad_history(history: np.ndarray, history_len: int) -> np.ndarray:
     hist = np.asarray(history, dtype=np.float32)
     if hist.ndim == 1:
@@ -261,6 +270,7 @@ def load_runtime(artifacts: str | Path | None = None) -> InferRuntime:
     model = load_world_model(ckpt, device)
     scaler = load_scaler(artifacts_dir)
     threshold = load_threshold(artifacts_dir, default=float(cfg.eval.alert_threshold))
+    temperature = load_temperature(artifacts_dir, default=1.0)
 
     cloud: BenignCloud | None = None
     cloud_path = artifacts_dir / "benign_cloud.joblib"
@@ -281,6 +291,7 @@ def load_runtime(artifacts: str | Path | None = None) -> InferRuntime:
         device=device,
         artifacts_dir=artifacts_dir,
         has_novelty=cloud is not None,
+        temperature=temperature,
     )
 
 
@@ -289,7 +300,9 @@ def forecast(runtime: InferRuntime, history: np.ndarray) -> ForecastResult:
     x = torch.tensor(hist[None, ...], dtype=torch.float32, device=runtime.device)
     with torch.no_grad():
         out = runtime.model(x, future=None, teacher_forcing=0.0)
-    attack = torch.sigmoid(out["attack_logits"])[0].cpu().numpy()
+    logits = out["attack_logits"][0].cpu().numpy()
+    temp = max(float(getattr(runtime, "temperature", 1.0)), 1e-6)
+    attack = 1.0 / (1.0 + np.exp(-np.clip(logits / temp, -60.0, 60.0)))
     family_prob = torch.softmax(out["family_logits"][0], dim=-1).cpu().numpy()
     stage_prob = torch.softmax(out["stage_logits"][0], dim=-1).cpu().numpy()
     future_states = out["future_states"][0].cpu().numpy()

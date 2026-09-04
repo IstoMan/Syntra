@@ -15,31 +15,38 @@ dataset:
 windows:
   size_seconds: 30
   horizon_k: 5
-  history_len: 16
+  history_len: 32
 
 splits:
-  # Time split. Real CIC: Mon benign; Tue brute-force; Wed DoS; Thu web+infiltration (val);
-  # Fri Bot, PortScan, DDoS (test). Never shuffle rows across time.
+  # Purged family-blocked time split. Never shuffle rows across time.
+  # Each day is cut train / purge / val / purge / test. Earliest episode of any
+  # family except infiltration is pulled into train so Friday Bot/PortScan/DDoS
+  # are learnable; later episodes stay held out.
   train_days: [monday, tuesday, wednesday]
   val_days: [thursday]
   test_days: [friday]
-  strategy: time  # never shuffle rows across time
+  strategy: purged_family_blocked
+  train_frac: 0.55
+  val_frac: 0.15
 
 model:
-  type: gru_world_model
+  type: transformer_gru_world_model
   state_dim: 40
-  embed_dim: 128
-  hidden_dim: 128
-  num_layers: 2
-  dropout: 0.1
-  teacher_forcing: 0.25
+  embed_dim: 256
+  hidden_dim: 256
+  num_layers: 3
+  encoder_layers: 4
+  n_heads: 8
+  dropout: 0.15
+  teacher_forcing: 0.5
   # Readout heads sit on predicted states, not on the current window.
   heads: [attack, family, stage]
 
 train:
   batch_size: 32
-  epochs: 30
-  patience: 6
+  epochs: 60
+  patience: 10
+  warmup_epochs: 3
   lr: 0.0003
   weight_decay: 0.0001
   seed: 42
@@ -48,12 +55,16 @@ train:
   attack_loss_weight: 1.0
   family_loss_weight: 0.5
   stage_loss_weight: 0.35
+  precursor_loss_weight: 6.0
+  mid_attack_loss_weight: 0.4
+  teacher_forcing_end: 0.05
+  pos_weight_mult: 1.5
   num_workers: 0
 
 eval:
   alert_threshold: 0.5
-  fpr_cap: 0.01
-  novelty_gate: 0.55
+  fpr_cap: 0.03
+  novelty_gate: 0.45
   lead_time_on: future  # earliest k>=1 with P>threshold; current-window alerts do not count
   metrics: [precision, recall, f1, fpr, lead_time, ece]
 

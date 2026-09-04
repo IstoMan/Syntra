@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from syntra.config import load_config
 from syntra.data.prepare import attach_splits, build_sequences
@@ -16,7 +17,7 @@ def test_state_vector_is_locked_at_40_and_label_free():
     assert forbidden.isdisjoint(STATE_FEATURES)
 
 
-def test_synthetic_week_matches_cic_schedule_and_time_split():
+def test_synthetic_week_purged_split_covers_families_without_infiltration_train():
     cfg = load_config()
     windows = attach_splits(generate_windows(seed=0), cfg)
     assert set(windows["day"]) == {
@@ -35,8 +36,17 @@ def test_synthetic_week_matches_cic_schedule_and_time_split():
     assert {"portscan", "dos", "botnet"}.issubset(
         set(windows.loc[windows["day"] == "friday", "family"])
     )
-    assert (windows.loc[windows["split"] == "train", "family"] != "infiltration").all()
-    assert windows.loc[windows["day"] == "friday", "split"].eq("test").all()
+    train_attack = windows[
+        (windows["split"] == "train")
+        & windows["train_eligible"]
+        & (windows["y_attack"] == 1)
+    ]
+    assert (train_attack["family"] != "infiltration").all()
+    train_fams = set(train_attack["family"])
+    for family in ("portscan", "botnet", "dos"):
+        assert family in train_fams
+    assert (windows["split"] == "test").any()
+    assert (windows["split"] == "val").any()
 
 
 def test_sequences_forecast_labels_are_next_windows():
@@ -44,15 +54,16 @@ def test_sequences_forecast_labels_are_next_windows():
     windows = attach_splits(generate_windows(seed=1), cfg)
     windows = windows_frame_with_future(windows, cfg.windows.horizon_k)
     seq = build_sequences(windows, cfg)
-    row = seq.iloc[100]
+    assert not seq.empty
+    row = seq.iloc[min(100, len(seq) - 1)]
     day = windows[windows["day"] == row["day"]].sort_values("window_idx")
     t = int(row["window_idx"])
     for k in range(cfg.windows.horizon_k):
         assert int(row["y_future"][k]) == int(day.iloc[t + 1 + k]["y_attack"])
     assert int(row["y_current"]) == int(day.iloc[t]["y_attack"])
-    # A detection leak would equalize current and k=0 when they differ.
     mismatch = [
         int(np.asarray(fut)[0]) != int(cur)
         for fut, cur in zip(seq["y_future"], seq["y_current"])
     ]
     assert any(mismatch)
+    assert "is_precursor" in seq.columns

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from syntra.eval.protocol import (
@@ -14,8 +15,13 @@ from syntra.eval.protocol import (
 
 
 def test_time_split_rejects_shuffle():
-    with pytest.raises(ValueError, match="time"):
+    with pytest.raises(ValueError, match="shuffle|time"):
         assert_time_split_strategy("random")
+
+
+def test_purged_family_blocked_is_allowed():
+    assert_time_split_strategy("purged_family_blocked")
+    assert_time_split_strategy("time")
 
 
 def test_future_labels_are_shifted_not_current():
@@ -83,6 +89,22 @@ def test_horizon_metrics_fpr():
     m = classification_at_horizon(y, p, 0.5)
     assert m["fpr"] == pytest.approx(1 / 3)
     assert m["recall"] == pytest.approx(1.0)
+
+
+def test_lead_time_uses_wall_clock_timestamps():
+    current = np.zeros(16, dtype=np.int64)
+    current[10:13] = 1
+    families = np.array(["benign"] * 16, dtype=object)
+    families[10:13] = "dos"
+    probs = np.zeros((16, 3), dtype=np.float64)
+    probs[7, 2] = 0.9
+    ts = pd.date_range("2017-07-07 09:00", periods=16, freq="60s")
+    leads = lead_time_from_future_probs(
+        current, families, probs, 0.5, window_seconds=30, timestamps=ts
+    )
+    assert leads[0].caught
+    assert leads[0].lead_windows == 3
+    assert leads[0].lead_seconds == pytest.approx(180.0)
 
 
 def test_merge_episodes_joins_gaps_and_drops_flickers():
