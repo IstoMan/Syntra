@@ -69,9 +69,27 @@
 ### 1. Launch FastAPI Backend
 ```bash
 cd backend
+python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 API Documentation will be live at `http://127.0.0.1:8000/docs`.
+
+`requirements.txt` installs the `syntra` world-model package from `../ai`. On startup FastAPI lazy-loads `ai/artifacts/world_model.pt`. If that checkpoint is missing, `/api/forecast` (and risk/explain) keep the 7-stage demo stubs and `/api/health` reports `inference_source: "demo_fallback"`.
+
+Optional: point at another artifact directory:
+
+```bash
+set SYNTRA_ARTIFACTS_DIR=C:\path\to\ai\artifacts
+```
+
+Train a live checkpoint (from `ai/`):
+
+```bash
+cd ai
+python -m pip install -e .
+python -m syntra.prepare
+python -m syntra.train --epochs 4
+```
 
 ### 2. Launch React Frontend
 ```bash

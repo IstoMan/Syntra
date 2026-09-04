@@ -5,7 +5,8 @@ import {
   RiskAnalysisResponse, 
   ExplainabilityResponse, 
   AlertItem, 
-  PageId 
+  PageId,
+  HealthStatus
 } from '../types';
 import { api } from '../services/api';
 
@@ -37,6 +38,7 @@ interface SimulationContextType {
   forecastData: ForecastResponse | null;
   riskData: RiskAnalysisResponse | null;
   explanationData: ExplainabilityResponse | null;
+  healthStatus: HealthStatus | null;
   isAutoTourActive: boolean;
   setCurrentPage: (page: PageId) => void;
   setSelectedFlow: (flow: FlowDetail | null) => void;
@@ -85,6 +87,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
   const [forecastData, setForecastData] = useState<ForecastResponse | null>(null);
   const [riskData, setRiskData] = useState<RiskAnalysisResponse | null>(null);
   const [explanationData, setExplanationData] = useState<ExplainabilityResponse | null>(null);
+  const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
 
   const getFormattedTime = useCallback(() => {
     let s = timeSeconds % 60;
@@ -337,14 +340,18 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
 
   // Initial Data Load
   const refreshData = useCallback(async () => {
-    const fc = await api.getForecast(currentStage);
-    const rk = await api.getRiskAnalysis(currentStage);
-    const exp = await api.getExplanation(currentStage);
-    const al = await api.getAlerts();
+    const [fc, rk, exp, al, health] = await Promise.all([
+      api.getForecast(currentStage),
+      api.getRiskAnalysis(currentStage),
+      api.getExplanation(currentStage),
+      api.getAlerts(),
+      api.getHealth()
+    ]);
 
     setForecastData(fc);
     setRiskData(rk);
     setExplanationData(exp);
+    setHealthStatus(health);
     if (alerts.length === 0) {
       setAlerts(al);
     }
@@ -498,6 +505,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
         forecastData,
         riskData,
         explanationData,
+        healthStatus,
         isAutoTourActive,
         setCurrentPage,
         setSelectedFlow,

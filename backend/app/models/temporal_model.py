@@ -226,5 +226,5 @@ def generate_attack_forecast(current_stage_idx: int, risk_score: float, attack_p
         predictions=predictions,
         forecast_reasoning=reasoning,
         forecast_summary=summary,
-        model_architecture="LSTM-Temporal-Transition-Network (5-Window Horizon)"
+        model_architecture="GRU world model (K=5) [fallback]"
     )

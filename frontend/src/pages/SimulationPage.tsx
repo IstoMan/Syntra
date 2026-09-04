@@ -54,7 +54,7 @@ import { Progress } from '../components/ui/progress';
 interface TerminalLogEntry {
   id: string;
   time: string;
-  source: 'ZEEK' | 'SURICATA' | 'SYSMON' | 'AI-LSTM' | 'FIREWALL';
+  source: 'ZEEK' | 'SURICATA' | 'SYSMON' | 'AI-GRU' | 'FIREWALL';
   level: 'INFO' | 'WARN' | 'CRIT' | 'MITIGATED';
   message: string;
 }
@@ -92,6 +92,8 @@ export const SimulationPage: React.FC = () => {
     setActiveScenario,
     forecastData,
     riskData,
+    explanationData,
+    healthStatus,
     flows,
     selectedFlow,
     setSelectedFlow,
@@ -154,7 +156,7 @@ export const SimulationPage: React.FC = () => {
     6: 8.7,
     7: 0.8
   };
-  const riskScore = stageRiskScores[currentStage] ?? 1.2;
+  const riskScore = forecastData?.current_state.risk_score ?? stageRiskScores[currentStage] ?? 1.2;
 
   // Attack Likelihood Progression: 4% -> 22% -> 48% -> 67% -> 82% -> 89% (or 2% if mitigated)
   const stageProbabilities: Record<number, number> = {
@@ -166,7 +168,9 @@ export const SimulationPage: React.FC = () => {
     6: 0.89,
     7: 0.02
   };
-  const attackProb = stageProbabilities[currentStage] ?? 0.04;
+  const attackProb = forecastData?.current_state.attack_probability ?? stageProbabilities[currentStage] ?? 0.04;
+  const modelLive = Boolean(forecastData?.model_loaded || healthStatus?.model_loaded);
+  const inferenceSource = forecastData?.inference_source || healthStatus?.inference_source || 'offline_mock';
 
   // Active Flows: 142 -> 380 -> 1,240 -> 2,890 -> 4,120
   const stageActiveFlows: Record<number, number> = {
@@ -234,7 +238,7 @@ export const SimulationPage: React.FC = () => {
     { id: 1, label: 'Network Traffic', desc: 'Ingestion' },
     { id: 2, label: 'Feature Extraction', desc: 'NetFlow Parser' },
     { id: 3, label: 'Network State', desc: 'Graph State' },
-    { id: 4, label: 'AI Forecast', desc: 'Temporal LSTM' },
+    { id: 4, label: 'AI Forecast', desc: 'GRU World Model' },
     { id: 5, label: 'Risk Assessment', desc: 'Multi-Window' },
     { id: 6, label: 'Explainability', desc: 'SHAP & Weights' },
     { id: 7, label: 'Early Warning', desc: 'SOC Dispatch' }
@@ -247,8 +251,8 @@ export const SimulationPage: React.FC = () => {
   const networkStateLevels = ['NORMAL', 'ANOMALY', 'SUSPICIOUS', 'HIGH RISK', 'FORECAST'];
   const currentStateLevelIndex = isMitigated ? 0 : Math.min(4, currentStage - 1);
 
-  // 5-Step Future Timeline Predictions
-  const fiveStepTimeline = [
+  // 5-Step Future Timeline Predictions (API-backed when the world model or stub forecast is live)
+  const fallbackTimeline = [
     {
       step: 'Current State',
       timeWindow: 't+0 (10:30:01)',
@@ -305,14 +309,48 @@ export const SimulationPage: React.FC = () => {
     }
   ];
 
+  const fiveStepTimeline =
+    forecastData?.predictions && forecastData.predictions.length > 0
+      ? [
+          {
+            step: 'Current State',
+            timeWindow: `t+0 (${forecastData.current_state.timestamp})`,
+            stageName: forecastData.current_state.current_stage,
+            probability: forecastData.current_state.attack_probability,
+            risk: forecastData.current_state.risk_level,
+            mitre: forecastData.predictions[0]?.mitre_technique_id ?? '—',
+            mitreName: forecastData.predicted_family ?? 'baseline'
+          },
+          ...forecastData.predictions.map((pred) => ({
+            step: `${pred.window_label} ${pred.predicted_stage}`,
+            timeWindow: `${pred.window_label} (${pred.expected_time_ist})`,
+            stageName: pred.predicted_stage,
+            probability: pred.probability,
+            risk: pred.risk_badge,
+            mitre: pred.mitre_technique_id ?? '',
+            mitreName: pred.predicted_family || pred.mitre_technique_name || ''
+          }))
+        ]
+      : fallbackTimeline;
+
   // AI Feature Impact Values (Explainability)
-  const featureImpacts = [
+  const fallbackFeatureImpacts = [
     { name: 'High Packet Rate', value: currentStage >= 2 ? 38 : 6, display: '+38%', baseline: '1,200 pps', current: packetsSec },
     { name: 'Unusual Port Activity', value: currentStage >= 3 ? 29 : 4, display: '+29%', baseline: 'Port 443 only', current: 'Port 8443, 88 SPN' },
     { name: 'Flow Duration', value: currentStage >= 4 ? 18 : 3, display: '+18%', baseline: '1.2s avg', current: '18.4s persistent' },
     { name: 'TCP Flag Pattern', value: currentStage >= 2 ? 12 : 2, display: '+12%', baseline: 'ACK: 98%', current: 'SYN Surge 24x' },
     { name: 'Timing Pattern', value: currentStage >= 4 ? 8 : 1, display: '+8%', baseline: 'Random Poisson', current: '10.2s Jitter Heartbeat' }
   ];
+  const featureImpacts =
+    explanationData?.feature_impacts && explanationData.feature_impacts.length > 0
+      ? explanationData.feature_impacts.slice(0, 5).map((feat) => ({
+          name: feat.display_name,
+          value: Math.min(100, Math.abs(feat.shap_value) * 100),
+          display: `${feat.shap_value >= 0 ? '+' : ''}${feat.shap_value.toFixed(2)}`,
+          baseline: String(feat.baseline_value),
+          current: `${feat.current_value} ${feat.unit}`
+        }))
+      : fallbackFeatureImpacts;
 
   // Central Network Activity Timeline Events (Strictly Fictional Private IPs)
   const trafficTimelineEvents: TimelineTrafficEvent[] = [
@@ -422,9 +460,9 @@ export const SimulationPage: React.FC = () => {
     { time: '10:30:01', msg: 'Normal traffic detected', stage: 1, type: 'ZEEK', level: 'INFO' },
     { time: '10:30:08', msg: 'Packet rate increased (4,800 pps)', stage: 2, type: 'SURICATA', level: 'WARN' },
     { time: '10:30:15', msg: 'Unusual port activity detected on Port 88 & 8443', stage: 3, type: 'ZEEK', level: 'WARN' },
-    { time: '10:30:22', msg: 'Network state changed to Suspicious', stage: 4, type: 'AI-LSTM', level: 'WARN' },
-    { time: '10:30:30', msg: 'Attack probability increased to 67%', stage: 4, type: 'AI-LSTM', level: 'CRIT' },
-    { time: '10:30:38', msg: 'Future attack progression forecast generated', stage: 5, type: 'AI-LSTM', level: 'CRIT' },
+    { time: '10:30:22', msg: 'Network state changed to Suspicious', stage: 4, type: 'AI-GRU', level: 'WARN' },
+    { time: '10:30:30', msg: 'Attack probability increased to 67%', stage: 4, type: 'AI-GRU', level: 'CRIT' },
+    { time: '10:30:38', msg: 'Future attack progression forecast generated', stage: 5, type: 'AI-GRU', level: 'CRIT' },
     { time: '10:30:45', msg: 'HIGH RISK — Early warning generated', stage: 6, type: 'FIREWALL', level: 'CRIT' },
     ...(currentStage === 7 ? [
       { time: '10:30:52', msg: 'AUTONOMOUS MITIGATION: Threat isolated & sinkholed', stage: 7, type: 'FIREWALL', level: 'MITIGATED' }
@@ -531,8 +569,12 @@ export const SimulationPage: React.FC = () => {
             </div>
 
             {/* Defense Badge */}
-            <Badge variant="outline" className="text-[10px] text-muted-foreground font-mono hidden sm:inline-flex">
-              Demo Data • Fictional Subnet (10.10.x.x)
+            <Badge
+              variant={modelLive ? 'cyber' : 'outline'}
+              className={`text-[10px] font-mono hidden sm:inline-flex ${modelLive ? '' : 'text-muted-foreground'}`}
+            >
+              {modelLive ? 'World Model LIVE' : 'Demo fallback'}
+              {inferenceSource === 'world_model' ? ' · GRU K=5' : ''}
             </Badge>
           </div>
 
@@ -938,7 +980,7 @@ export const SimulationPage: React.FC = () => {
                 </div>
               </div>
               <Badge variant="cyber" className="text-[10px] px-1.5 py-0">
-                Multi-Step LSTM
+                {modelLive ? 'GRU World Model' : 'Multi-Step GRU [fallback]'}
               </Badge>
             </div>
 
@@ -998,7 +1040,13 @@ export const SimulationPage: React.FC = () => {
 
           <div className="pt-3 border-t border-border text-[10.5px] font-mono text-muted-foreground flex items-center justify-between">
             <span>Forecast Window: 5 Cycles</span>
-            <span className="text-emerald-400 font-bold">Accuracy: 94.8%</span>
+            <span className={modelLive ? 'text-sky-400 font-bold' : 'text-emerald-400 font-bold'}>
+              {forecastData?.predicted_family
+                ? `Family: ${forecastData.predicted_family} · Combined: ${(forecastData.combined_score ?? attackProb).toFixed(2)}`
+                : modelLive
+                  ? 'GRU K=5 live'
+                  : 'Demo fallback'}
+            </span>
           </div>
         </Card>
 
@@ -1014,7 +1062,7 @@ export const SimulationPage: React.FC = () => {
                 </CardTitle>
               </div>
               <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-mono">
-                XAI SHAP
+                {modelLive ? 'XAI Gradients' : 'XAI SHAP'}
               </Badge>
             </div>
 
@@ -1050,15 +1098,20 @@ export const SimulationPage: React.FC = () => {
                 <span>AI SOC Assessment Summary</span>
               </div>
               <p className="text-xs text-muted-foreground font-sans leading-relaxed italic">
-                “The model detected a changing traffic pattern across multiple time windows, increasing the probability of possible attack progression.”
+                “{explanationData?.plain_english_explanation
+                  || 'The model detected a changing traffic pattern across multiple time windows, increasing the probability of possible attack progression.'}”
               </p>
             </div>
 
           </div>
 
           <div className="pt-3 border-t border-border text-[10.5px] font-mono text-muted-foreground flex items-center justify-between">
-            <span>Explainer: Kernel SHAP</span>
-            <span className="text-sky-400 font-semibold">Confidence: 91.2%</span>
+            <span>Explainer: {modelLive ? 'Input gradients' : 'Kernel SHAP (fallback)'}</span>
+            <span className="text-sky-400 font-semibold">
+              {forecastData?.alert_threshold != null
+                ? `θ=${forecastData.alert_threshold.toFixed(2)}`
+                : 'Confidence: 91.2%'}
+            </span>
           </div>
         </Card>
 

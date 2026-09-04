@@ -306,7 +306,7 @@ class TrafficSimulator:
         components = [
             RiskComponent(name="Traffic Anomaly", score_percentage=min(100.0, score * 9.4), description="Deviation from learned normal traffic feature distribution", weight=0.35),
             RiskComponent(name="Temporal Escalation", score_percentage=min(100.0, score * 8.8), description="Rate of state transition acceleration across windows", weight=0.25),
-            RiskComponent(name="Attack Probability", score_percentage=round(prob * 100, 1), description="LSTM predicted likelihood of multi-stage cyberattack progression", weight=0.25),
+            RiskComponent(name="Attack Probability", score_percentage=round(prob * 100, 1), description="GRU world-model predicted likelihood of multi-stage cyberattack progression", weight=0.25),
             RiskComponent(name="Asset Severity", score_percentage=min(100.0, score * 8.5), description="Criticality weighting of target infrastructure (Web/Auth/DB)", weight=0.15),
         ]
 

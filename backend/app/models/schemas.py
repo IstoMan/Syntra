@@ -59,6 +59,7 @@ class ForecastPrediction(BaseModel):
     mitre_technique_id: Optional[str] = None
     mitre_technique_name: Optional[str] = None
     expected_time_ist: str
+    predicted_family: Optional[str] = None
 
 class ForecastResponse(BaseModel):
     current_state: NetworkState
@@ -67,7 +68,12 @@ class ForecastResponse(BaseModel):
     predictions: List[ForecastPrediction]
     forecast_reasoning: List[str]
     forecast_summary: str
-    model_architecture: str = "LSTM-Temporal-Transition-Network (5-Window Horizon)"
+    model_architecture: str = "GRU world model (K=5)"
+    inference_source: str = "demo_fallback"
+    predicted_family: Optional[str] = None
+    combined_score: Optional[float] = None
+    alert_threshold: Optional[float] = None
+    model_loaded: bool = False
 
 class RiskComponent(BaseModel):
     name: str
@@ -88,6 +94,9 @@ class RiskAnalysisResponse(BaseModel):
     components: List[RiskComponent]
     history: List[RiskHistoryPoint]
     soc_interpretation: str
+    inference_source: Optional[str] = None
+    model_loaded: bool = False
+    combined_score: Optional[float] = None
 
 class FeatureImpact(BaseModel):
     feature_name: str
@@ -107,6 +116,8 @@ class ExplainabilityResponse(BaseModel):
     plain_english_explanation: str
     temporal_drift_summary: str
     prediction_timeline: List[Dict[str, Any]]
+    inference_source: Optional[str] = None
+    model_loaded: bool = False
 
 class AlertItem(BaseModel):
     id: str
@@ -141,6 +152,9 @@ class ModelPerformanceMetrics(BaseModel):
     confusion_matrix: Dict[str, int]
     roc_curve: List[Dict[str, float]]
     model_comparison: List[Dict[str, Any]]
+    inference_source: Optional[str] = None
+    model_loaded: bool = False
+    mean_lead_seconds: Optional[float] = None
 
 class SimulationStatus(BaseModel):
     is_running: bool

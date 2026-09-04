@@ -5,7 +5,8 @@ import {
   ExplainabilityResponse, 
   AlertItem, 
   ModelPerformanceMetrics, 
-  DatasetItem 
+  DatasetItem,
+  HealthStatus
 } from '../types';
 
 const API_BASE = '/api';
@@ -123,12 +124,17 @@ const getFallbackForecast = (stage: number): ForecastResponse => {
       : isAnomaly
       ? 'Based on early reconnaissance patterns, the model forecasts a 48% probability of initial access exploitation attempts in the upcoming window.'
       : 'Network telemetry is well within normal baseline parameters. Minimal probability of attack progression.',
-    model_architecture: 'LSTM-Temporal-Transition-Network (5-Window Horizon)'
+    model_architecture: 'GRU world model (K=5) [offline mock]',
+    inference_source: 'offline_mock',
+    predicted_family: isHigh ? 'botnet' : isAnomaly ? 'portscan' : 'benign',
+    combined_score: attackProb,
+    alert_threshold: 0.8,
+    model_loaded: false
   };
 };
 
 export const api = {
-  async getHealth() {
+  async getHealth(): Promise<HealthStatus> {
     try {
       const res = await fetch(`${API_BASE}/health`);
       if (res.ok) return await res.json();
@@ -144,7 +150,10 @@ export const api = {
       region: 'India',
       timezone: 'Asia/Kolkata',
       system_time: '10:30:21 IST',
-      active_scenario: 'Indian Digital Infrastructure Network (CII Simulation)'
+      active_scenario: 'Indian Digital Infrastructure Network (CII Simulation)',
+      model_loaded: false,
+      model_architecture: 'GRU world model (K=5)',
+      inference_source: 'offline_mock'
     };
   },
 
@@ -191,7 +200,7 @@ export const api = {
       components: [
         { name: 'Traffic Anomaly', score_percentage: Math.min(100, Math.round(score * 9.4)), description: 'Deviation from learned normal traffic feature distribution', weight: 0.35 },
         { name: 'Temporal Escalation', score_percentage: Math.min(100, Math.round(score * 8.8)), description: 'Rate of state transition acceleration across windows', weight: 0.25 },
-        { name: 'Attack Probability', score_percentage: Math.round(fc.current_state.attack_probability * 100), description: 'LSTM predicted likelihood of multi-stage cyberattack progression', weight: 0.25 },
+        { name: 'Attack Probability', score_percentage: Math.round(fc.current_state.attack_probability * 100), description: 'GRU world-model predicted likelihood of multi-stage cyberattack progression', weight: 0.25 },
         { name: 'Asset Severity', score_percentage: Math.min(100, Math.round(score * 8.5)), description: 'Criticality weighting of target infrastructure (Web/Auth/DB)', weight: 0.15 },
       ],
       history: [
@@ -369,7 +378,7 @@ export const api = {
       ],
       model_comparison: [
         {
-          model: 'SYNTRA Temporal LSTM (Proposed)',
+          model: 'SYNTRA GRU World Model (Proposed)',
           type: 'Temporal Forecaster',
           lead_time: '5 Windows Ahead',
           f1: 92.2,

@@ -407,7 +407,7 @@ export const NetworkTopologyMap: React.FC<NetworkTopologyMapProps> = ({
             {currentStage === 1 && 'Stage 1 • Baseline Operations: Standard Gaussian traffic distribution across all 6 core telemetry nodes.'}
             {currentStage === 2 && 'Stage 2 • Reconnaissance Phase: Targeted SYN-flood port sweep discovered originating from Internet Gateway.'}
             {currentStage === 3 && 'Stage 3 • Exploit & Initial Access: Memory injection / Kerberos ticket probing targeting finance host USER-042.'}
-            {currentStage === 4 && 'Stage 4 • Forecast C2 Active: High-frequency encrypted C2 beacon active. LSTM predicts DC-01 breach at t+1.'}
+            {currentStage === 4 && 'Stage 4 • Forecast C2 Active: High-frequency encrypted C2 beacon active. GRU world model predicts DC-01 breach at t+1.'}
             {currentStage === 5 && 'Stage 5 • Early Warning Dispatched: Predictive isolation advisory issued for USER-042 before lateral pivot.'}
             {currentStage === 6 && 'Stage 6 • Lateral Movement: Pass-the-hash authentication attempt intercepted targeting Active Directory DC-01.'}
             {currentStage === 7 && 'Stage 7 • Active Autonomous Mitigation: Adversary neutralized. Firewall ACL isolation active; zero data lost.'}

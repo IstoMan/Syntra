@@ -57,4 +57,6 @@ async def set_simulation_stage(req: SetStageRequest):
 @router.post("/reset")
 async def reset_simulation():
     simulator.reset_simulation()
+    from ..models.world_model_service import world_model_service
+    world_model_service.reset()
     return {"status": "reset", "current_stage": 1}

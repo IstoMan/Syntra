@@ -345,7 +345,7 @@ export const DatasetDetailsModal: React.FC<DatasetDetailsModalProps> = ({
                       Temporal Time-Window Aggregator
                     </h3>
                     <p className="text-xs text-muted-foreground font-sans mt-0.5">
-                      Converts discrete network flow telemetry into sequential lookahead time-windows for the LSTM Attack-Head.
+                      Converts discrete network flow telemetry into sequential lookahead time-windows for the GRU Attack-Head.
                     </p>
                   </div>
                   

@@ -51,6 +51,7 @@ export interface ForecastPrediction {
   mitre_technique_id?: string;
   mitre_technique_name?: string;
   expected_time_ist: string;
+  predicted_family?: string;
 }
 
 export interface ForecastResponse {
@@ -61,6 +62,11 @@ export interface ForecastResponse {
   forecast_reasoning: string[];
   forecast_summary: string;
   model_architecture: string;
+  inference_source?: string;
+  predicted_family?: string;
+  combined_score?: number;
+  alert_threshold?: number;
+  model_loaded?: boolean;
 }
 
 export interface RiskComponent {
@@ -84,6 +90,9 @@ export interface RiskAnalysisResponse {
   components: RiskComponent[];
   history: RiskHistoryPoint[];
   soc_interpretation: string;
+  inference_source?: string;
+  model_loaded?: boolean;
+  combined_score?: number;
 }
 
 export interface FeatureImpact {
@@ -110,6 +119,8 @@ export interface ExplainabilityResponse {
     score: number;
     note: string;
   }[];
+  inference_source?: string;
+  model_loaded?: boolean;
 }
 
 export interface AlertItem {
@@ -156,6 +167,9 @@ export interface ModelPerformanceMetrics {
     explainability: string;
     usp: string;
   }[];
+  inference_source?: string;
+  model_loaded?: boolean;
+  mean_lead_seconds?: number;
 }
 
 export interface DatasetFileItem {
@@ -259,6 +273,25 @@ export interface DatasetItem {
     files: number;
     size_display: string;
   };
+}
+
+export interface HealthStatus {
+  status: string;
+  product?: string;
+  version?: string;
+  problem_statement?: string;
+  environment?: string;
+  region?: string;
+  timezone?: string;
+  system_time?: string;
+  active_scenario?: string;
+  model_loaded?: boolean;
+  model_architecture?: string;
+  inference_source?: string;
+  artifacts_dir?: string;
+  load_error?: string | null;
+  has_novelty?: boolean;
+  alert_threshold?: number | null;
 }
 
 export type PageId =
