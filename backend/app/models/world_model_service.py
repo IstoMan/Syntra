@@ -30,11 +30,12 @@ from ..simulation.traffic_simulator import simulator
 
 logger = logging.getLogger("syntra.world_model")
 
-MODEL_ARCHITECTURE = "GRU world model (K=5)"
+MODEL_ARCHITECTURE = "Transformer+GRU world model (K=5)"
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = BACKEND_ROOT.parent
 AI_SRC = REPO_ROOT / "ai" / "src"
 DEFAULT_ARTIFACTS = REPO_ROOT / "ai" / "artifacts"
+DEFAULT_PROCESSED = REPO_ROOT / "ai" / "data" / "processed"
 
 
 def _ensure_syntra_on_path() -> None:
@@ -46,6 +47,12 @@ def _ensure_syntra_on_path() -> None:
 def artifacts_dir() -> Path:
     env = os.environ.get("SYNTRA_ARTIFACTS_DIR")
     return Path(env) if env else DEFAULT_ARTIFACTS
+
+
+def processed_dir() -> Path:
+    """Where `python -m syntra.prepare` writes windows/sequences and the scaler."""
+    env = os.environ.get("SYNTRA_PROCESSED_DIR")
+    return Path(env) if env else DEFAULT_PROCESSED
 
 
 def _risk_level(score: float) -> str:
@@ -128,7 +135,7 @@ class WorldModelService:
             from syntra.infer import load_runtime
 
             self._runtime = load_runtime(artifacts_dir())
-            logger.info("Loaded GRU world model from %s", artifacts_dir())
+            logger.info("Loaded Transformer+GRU world model from %s", artifacts_dir())
             return True
         except Exception as exc:
             self._runtime = None
@@ -507,7 +514,8 @@ class WorldModelService:
         return ModelPerformanceMetrics(
             is_demo_sample=False,
             notice=(
-                "CIC-IDS2017 time split (train Mon–Wed, val Thu, test Fri). "
+                "CIC-IDS2017 purged family-blocked time split "
+                "(per-day train/val/test; infiltration held out of train). "
                 "Headline F1@k=1 is world_model_combined. Current-window XGBoost is detection, not forecasting."
             ),
             precision=round(precision, 1),

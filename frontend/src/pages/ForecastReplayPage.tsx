@@ -5,15 +5,15 @@ import { api } from '../services/api';
 import {
   evaluateThreshold,
   formatClock,
+  formatFeatureValue,
   readWindow,
   windowSeconds,
   VERDICT_STYLE,
 } from '../lib/replay';
 import { ForecastTimelineChart } from '../components/charts/ForecastTimelineChart';
+import { NetworkActivityPanel } from '../components/charts/NetworkActivityPanel';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
-import { Button } from '../components/ui/button';
-
 const SPEEDS = [1, 4, 16];
 const BASE_TICK_MS = 240;
 
@@ -68,6 +68,10 @@ export const ForecastReplayPage: React.FC = () => {
     () => (timeline ? readWindow(timeline, cursor, threshold) : null),
     [timeline, cursor, threshold]
   );
+  const featureMeta = useMemo(
+    () => Object.fromEntries((timeline?.feature_meta ?? []).map((m) => [m.name, m])),
+    [timeline]
+  );
 
   const togglePlay = useCallback(() => {
     if (!timeline) return;
@@ -119,39 +123,50 @@ export const ForecastReplayPage: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center bg-muted/70 rounded-md border border-border p-0.5 font-mono">
-              {SPEEDS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setSpeed(s)}
-                  className={`px-2.5 py-1 rounded text-[11px] cursor-pointer transition-colors ${
-                    speed === s
-                      ? 'bg-primary text-primary-foreground font-bold'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {s}x
-                </button>
-              ))}
-            </div>
-            <Button variant="cyber" size="sm" onClick={togglePlay} className="font-bold">
-              {playing ? <Pause className="w-3.5 h-3.5 mr-1.5" /> : <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />}
-              {playing ? 'Pause' : 'Replay'}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
+          {/* Speed segments and icon-only transport, merged into one pill */}
+          <div className="flex items-center gap-0.5 self-start lg:self-auto shrink-0 rounded-full border border-border bg-muted/70 p-0.5">
+            {SPEEDS.map((s) => (
+              <button
+                key={s}
+                onClick={() => setSpeed(s)}
+                title={`Play at ${s}x speed`}
+                className={`px-2.5 py-1 rounded-full font-mono text-[11px] cursor-pointer transition-colors ${
+                  speed === s
+                    ? 'bg-primary text-primary-foreground font-bold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {s}x
+              </button>
+            ))}
+
+            <span className="w-px h-4 bg-border mx-1 shrink-0" aria-hidden="true" />
+
+            <button
+              onClick={togglePlay}
+              title={playing ? 'Pause the replay' : 'Replay the held-out day'}
+              aria-label={playing ? 'Pause the replay' : 'Replay the held-out day'}
+              className="p-1.5 rounded-full text-primary cursor-pointer transition-colors hover:bg-primary/15"
+            >
+              {playing ? (
+                <Pause className="w-3.5 h-3.5" />
+              ) : (
+                <Play className="w-3.5 h-3.5 fill-current" />
+              )}
+            </button>
+
+            <button
               onClick={() => {
                 setPlaying(false);
                 setCursor(0);
                 setThreshold(tuned);
               }}
-              className="font-mono text-xs"
+              title="Reset to the first window and the tuned threshold"
+              aria-label="Reset to the first window and the tuned threshold"
+              className="p-1.5 rounded-full text-muted-foreground cursor-pointer transition-colors hover:text-foreground hover:bg-foreground/10"
             >
-              <RotateCcw className="w-3.5 h-3.5 mr-1" />
-              Reset
-            </Button>
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
 
@@ -215,6 +230,9 @@ export const ForecastReplayPage: React.FC = () => {
           )}
         </div>
       </Card>
+
+      {/* Real network telemetry for the window under the cursor, next to the graph it explains */}
+      <NetworkActivityPanel timeline={timeline} cursor={cursor} />
 
       {/* Boxes */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -314,11 +332,17 @@ export const ForecastReplayPage: React.FC = () => {
             What drives the forecast
           </span>
           <div className="space-y-1.5">
-            {drivers.slice(0, 6).map((d) => (
+            {drivers.slice(0, 6).map((d) => {
+              const meta = featureMeta[d.feature];
+              return (
               <div key={d.feature} className="space-y-0.5">
                 <div className="flex items-center justify-between text-[10.5px] font-mono">
                   <span className="text-foreground truncate">{d.feature.replace(/_/g, ' ')}</span>
-                  <span className="text-muted-foreground shrink-0 ml-2">{d.weight.toExponential(1)}</span>
+                  <span className="text-muted-foreground shrink-0 ml-2">
+                    {meta
+                      ? formatFeatureValue(meta, reading.window.features[d.feature])
+                      : d.weight.toExponential(1)}
+                  </span>
                 </div>
                 <div className="h-1 bg-muted/60 rounded-full overflow-hidden">
                   <div
@@ -327,10 +351,12 @@ export const ForecastReplayPage: React.FC = () => {
                   />
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
           <p className="text-[10px] text-muted-foreground leading-snug pt-0.5">
-            Global mean |gradient| of the future-attack logit, from shap_world.json.
+            Global mean |gradient| of the future-attack logit, from shap_world.json. Values shown are
+            this window's.
           </p>
         </Card>
       </div>

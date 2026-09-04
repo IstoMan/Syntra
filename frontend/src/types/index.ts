@@ -34,6 +34,24 @@ export interface ReplayWindow {
   mitre_tactic: string;
   mitre_technique: string;
   true_family: string;
+  /** Raw, un-scaled values for the panel features, keyed by feature name. */
+  features: Record<string, number>;
+}
+
+export type FeatureUnit = 'count' | 'bytes' | 'rate' | 'ratio';
+
+export interface ReplayFeatureMeta {
+  name: string;
+  label: string;
+  unit: FeatureUnit;
+  note: string;
+  /** False for features that only back a drivers-list value, with no tile of their own. */
+  panel: boolean;
+  shap_weight: number;
+  shap_rank: number;
+  benign_median: number;
+  day_min: number;
+  day_max: number;
 }
 
 export interface ReplayEpisode {
@@ -70,4 +88,5 @@ export interface ReplayTimeline {
   windows: ReplayWindow[];
   episodes: ReplayEpisode[];
   drivers: ReplayDriver[];
+  feature_meta: ReplayFeatureMeta[];
 }

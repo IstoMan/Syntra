@@ -1,4 +1,4 @@
-import { ReplayEpisode, ReplayTimeline, ReplayWindow } from '../types';
+import { ReplayEpisode, ReplayFeatureMeta, ReplayTimeline, ReplayWindow } from '../types';
 
 /**
  * Analysis helpers for the held-out replay. Every figure here is derived from the
@@ -169,6 +169,73 @@ export function readWindow(
     `Model predicts ${stage}. Ground truth this window: ${window.true_family}.`;
 
   return { window, verdict, alerting, windowsToNextAttack, headline, detail };
+}
+
+function compact(value: number): string {
+  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+  if (value >= 10_000) return `${(value / 1000).toFixed(1)}k`;
+  return Math.round(value).toLocaleString();
+}
+
+/** Render a raw feature value in the unit it was actually measured in. */
+export function formatFeatureValue(meta: ReplayFeatureMeta, value: number): string {
+  switch (meta.unit) {
+    case 'bytes': {
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let v = value;
+      let i = 0;
+      while (v >= 1024 && i < units.length - 1) {
+        v /= 1024;
+        i += 1;
+      }
+      return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+    }
+    case 'rate':
+      return `${compact(value)}/s`;
+    case 'ratio':
+      return `${(value * 100).toFixed(1)}%`;
+    default:
+      return compact(value);
+  }
+}
+
+export interface BenignComparison {
+  /** Multiple of the benign median, or null when that median is zero. */
+  ratio: number | null;
+  /** Terse form for a dense tile, e.g. "13x". */
+  label: string;
+  /** Spelled out, for the tile's tooltip. */
+  title: string;
+  tone: string;
+}
+
+/**
+ * How far this window sits from the median benign window of the same day. Without
+ * it a raw count like "392 destinations" means nothing to the reader.
+ */
+export function compareToBenign(meta: ReplayFeatureMeta, value: number): BenignComparison {
+  if (meta.benign_median <= 0) {
+    return {
+      ratio: null,
+      label: value > 0 ? '>0' : '0',
+      title: value > 0 ? 'Above a benign median of zero' : 'At the benign median of zero',
+      tone: value > 0 ? 'text-amber-400' : 'text-muted-foreground',
+    };
+  }
+  const ratio = value / meta.benign_median;
+  const digits = ratio >= 10 ? 0 : 1;
+  const tone =
+    ratio >= 4 ? 'text-rose-400' : ratio >= 1.75 ? 'text-amber-400' : 'text-muted-foreground';
+  return {
+    ratio,
+    label: `${ratio.toFixed(digits)}x`,
+    title: `${ratio.toFixed(digits)}x the benign median of ${formatFeatureValue(
+      meta,
+      meta.benign_median
+    )} for this day`,
+    tone,
+  };
 }
 
 export const VERDICT_STYLE: Record<Verdict, { label: string; tone: string; dot: string }> = {
