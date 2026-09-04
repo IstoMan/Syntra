@@ -13,50 +13,44 @@
 - **Traditional IDS answers:** *“Is malicious activity happening now?”*
 - **SYNTRA answers:** *“What is likely to happen next?”*
 
+The model is a **network-state world model**, not an IDS classifier. It encodes a 40-dimensional
+30-second window, rolls the state forward `K = 5` steps with a GRU, and reads attack probability,
+family and MITRE stage off the **predicted future**. Current-window labels are used only for the
+detection baselines we compare against.
+
 ```
-              SYNTRA
-                │
-                ▼
-        NETWORK TRAFFIC
-                │
-                ▼
-       FEATURE EXTRACTION
-                │
-                ▼
-        NETWORK STATE
-                │
-                ▼
-       TEMPORAL AI MODEL
-                │
-                ▼
-        FUTURE FORECAST (t+1 .. t+5)
-                │
-        ┌───────┴────────┐
-        ▼                ▼
-    RISK SCORE       EXPLANATION (SHAP)
-        │                │
-        └───────┬────────┘
-                ▼
-          EARLY WARNING
-                │
-                ▼
-       SECURITY ANALYST
+NETWORK TRAFFIC → FEATURE EXTRACTION → NETWORK STATE
+                                            │
+                                    TEMPORAL AI MODEL
+                                            │
+                              FUTURE FORECAST (t+1 .. t+5)
+                                    ┌───────┴────────┐
+                               RISK SCORE      EXPLANATION
+                                    └───────┬────────┘
+                                      EARLY WARNING
 ```
 
 ---
 
-## 2. Key Capabilities & 10 SOC Console Pages
+## 2. The Console
 
-1. **Dashboard:** Real-time KPIs, dynamic Risk Over Time chart (IST time-series), 5-Window Forecast Horizon, Recent Alerts feed, SHAP summary, and Innovation USP card.
-2. **Traffic Monitor:** Live streaming flow telemetry, asset resolution (DC-01, WEB-01, DB-01, USER-042), protocol/risk filters, search, and slide-out anomaly detail drawer with direct forecast linking.
-3. **Attack Forecast:** 5-window lookahead timeline ($t+1$ to $t+5$) with transition probabilities, confidence ratings, and AI security reasoning.
-4. **Risk Analysis:** Composite radial risk gauge (0–10), 4-factor breakdown (Traffic Anomaly, Temporal Escalation, Attack Probability, Asset Severity), and SOC interpretation.
-5. **Explainability (XAI):** Mathematical SHAP feature attribution bars (+/- relative to normal baseline), sequential prediction timeline, and statistical Z-score drift metrics.
-6. **MITRE ATT&CK Matrix:** 7-stage enterprise kill chain progression (Recon $\rightarrow$ Initial Access $\rightarrow$ Execution $\rightarrow$ PrivEsc $\rightarrow$ C2 $\rightarrow$ Lateral Movement $\rightarrow$ Exfiltration) with observed vs predicted highlights.
-7. **Alerts & Early Warning:** Actionable early warning triage queue with interactive status lifecycle (`NEW` $\rightarrow$ `UNDER_INVESTIGATION` $\rightarrow$ `REVIEWED`).
-8. **Model Performance:** Transparent benchmark metrics (Precision 91.3%, Recall 93.1%, F1 92.2%, FPR 4.8%, 5-window Lead Time, Confusion Matrix, and ROC-AUC curve).
-9. **Data Source & Ingestion:** Benchmark datasets (CIC-IDS2017, UNSW-NB15, CTU-13) and live CSV/PCAP flow uploader with statistical feature validation.
-10. **Settings:** Configurable forecast lookahead (1, 3, 5, 10 windows), alert sensitivity sliders, simulation tick rates (1x, 2x, 5x), and deployment metadata.
+One page: **Attack Forecast — Held-Out Replay**. It replays the model's scores over the entire
+held-out test day and lets you interrogate the tradeoff between warning early and crying wolf.
+
+- **Forecast timeline** — every evaluation window plotted as the combined score at `t+1`, with the
+  actual attack windows shaded and a **draggable alert threshold**.
+- **Dynamic window label** — a plain-language read of whatever window you hover or scrub to. It names
+  what the model is doing right then: forecasting early, merely detecting an attack already underway,
+  raising a false alarm, or missing one outright.
+- **Warned before the attack** — episodes alerted inside the horizon before they began, and mean lead
+  time, both recomputed live as you move the threshold.
+- **Cost of that threshold** — false alarms against benign windows, so the lead time above is never
+  quoted without its price.
+- **This window** — the combined score and its two components (attack head, novelty), predicted vs
+  actual family, MITRE technique, and the `t+1 … t+5` rollout.
+- **What drives the forecast** — top feature attributions from `shap_world.json`.
+
+Every number rendered is read from the evaluation artifacts. There is no scripted demo data in the UI.
 
 ---
 
@@ -64,7 +58,7 @@
 
 ### Prerequisites
 - Python 3.10+
-- Node.js 18+ and npm
+- Node.js 18+ (or Bun)
 
 ### 1. Launch FastAPI Backend
 ```bash
@@ -72,42 +66,90 @@ cd backend
 python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
-API Documentation will be live at `http://127.0.0.1:8000/docs`.
+API docs at `http://127.0.0.1:8000/docs`.
 
-`requirements.txt` installs the `syntra` world-model package from `../ai`. On startup FastAPI lazy-loads `ai/artifacts/world_model.pt`. If that checkpoint is missing, `/api/forecast` (and risk/explain) keep the 7-stage demo stubs and `/api/health` reports `inference_source: "demo_fallback"`.
+The console reads `GET /api/replay/timeline`, which serves `ai/artifacts/timeline.parquet` plus
+`metrics.json`, `threshold.json` and `shap_world.json`. If those artifacts are missing the endpoint
+returns 503 and the UI tells you to regenerate them — it does not fall back to invented data.
 
-Optional: point at another artifact directory:
-
-```bash
-set SYNTRA_ARTIFACTS_DIR=C:\path\to\ai\artifacts
-```
-
-Train a live checkpoint (from `ai/`):
+Train and evaluate a checkpoint (from `ai/`):
 
 ```bash
 cd ai
 python -m pip install -e .
 python -m syntra.prepare
-python -m syntra.train --epochs 4
+python -m syntra.train
+python -m syntra.evaluate
 ```
 
-### 2. Launch React Frontend
+Override the artifact directory with `SYNTRA_ARTIFACTS_DIR` if needed.
+
+### 2. Launch Frontend
 ```bash
 cd frontend
-npm run dev
+npm install && npm run dev     # or: bun install && bun run dev
 ```
-Open `http://localhost:5173` in your browser.
+Open `http://localhost:5173`.
 
 ---
 
-## 4. 2-Minute SIH Judging Demo Script
+## 4. Current Results — Read This Before Demoing
 
-1. **00:00 — Dashboard:** Present SYNTRA, show the IST clock, system status, and baseline network telemetry.
-2. **00:15 — Start Demo:** Click **"START ATTACK FORECAST DEMO"** or the **"Demo Tour"** button.
-3. **00:25 — Traffic Monitor:** Observe incoming flows; click a suspicious flow to show the anomaly detail drawer.
-4. **00:45 — Anomaly Escalation:** Watch the risk score rise from Low (1.4) to Medium (4.2).
-5. **01:00 — Attack Forecast:** Navigate to Attack Forecast and showcase the $t+1$ to $t+5$ horizon timeline.
-6. **01:20 — Explainability (SHAP):** Open Explainability to show the positive feature impacts (+0.38 Packet Rate, +0.31 Beaconing).
-7. **01:35 — Alerts:** Open Alerts, review the Early Warning card, and click **"Investigate"** to transition status to `UNDER INVESTIGATION`.
-8. **01:50 — MITRE ATT&CK:** Review the highlighted predicted stage in the enterprise progression map.
-9. **02:00 — Wrap-Up:** Conclude on how SYNTRA shifts cybersecurity from reactive detection to predictive defence.
+These come from `ai/artifacts/metrics.json` and `leads.json` on the CIC-IDS2017 **Friday** test split
+(train Mon–Wed, validate Thu). They are not flattering, and they are the actual numbers.
+
+**Forecasting, `world_model_combined` at k=1:**
+
+| Metric | Value |
+| --- | --- |
+| Precision | 84.4% |
+| Recall | 13.2% |
+| F1 | 22.8% |
+| FPR | 1.9% |
+| ECE (calibration error) | 0.20 |
+
+**Lead time, at the val-tuned threshold of 0.80:**
+
+| Threshold | Episodes warned early | Mean lead | False alarms (of 259 benign) |
+| --- | --- | --- | --- |
+| **0.80** (tuned) | 0 / 25 | 0 s | 4 (1.5%) |
+| 0.70 | 2 / 25 | 210 s | 7 (2.7%) |
+| 0.40 | 4 / 25 | 240 s | 35 (13.5%) |
+| 0.30 | 6 / 25 | 260 s | 51 (19.7%) |
+
+Honest reading of this:
+
+1. **At the tuned threshold the model forecasts nothing.** All 32 of its alerts land during or after an
+   attack window, so on this split it behaves as a high-precision *detector*, not a forecaster.
+2. **The threshold is what kills the lead time, not the model.** Lowering it to 0.70 buys 3.5 minutes of
+   genuine advance warning for three extra false alarms across an 11-hour day. The tuner recorded
+   `under_fpr_cap: false` — 0.80 never satisfied its own 1% FPR target either.
+3. **It forecasts scans, not botnets.** Every early catch is `portscan`. Before botnet episodes the
+   combined score sits flat at 0.11–0.32 and never approaches any usable threshold.
+4. **Calibration is poor.** ECE around 0.20 means the probabilities should not be read as literal
+   confidences.
+
+### Known bug
+
+`config.py` declares `windows.size_seconds = 30`, and `evaluate.py` multiplies lead windows by that
+value. The actual windows in `timeline.parquet` are **60 seconds** apart (462 of 463 gaps). Every
+`mean_lead_seconds` in `metrics.json` and `leads.json` is therefore understated by 2×. The console
+derives spacing from the timestamps instead, so the figures it shows are wall-clock correct.
+
+---
+
+## 5. Demo Script
+
+1. **Open the console.** State the split up front: CIC-IDS2017, trained Mon–Wed, tuned Thu, and this is
+   Friday — data the model has never seen.
+2. **Press Replay.** Walk the day. Watch the label change as the score moves through benign traffic,
+   attack windows, and misses.
+3. **Stop on an attack band.** The label reads `DETECTING` — the model fired, but only once the attack
+   was already running. Make the point explicitly: this is the honest failure mode.
+4. **Drag the threshold to 0.70.** A green marker appears before a portscan episode and the label flips
+   to `EARLY WARNING`. The lead-time card jumps to 2 / 25 episodes at 3m 30s.
+5. **Point at the cost card.** False alarms went 4 → 7. Lead time is never free.
+6. **Keep dragging to 0.30.** Catch rate climbs to 6 / 25, false alarms explode to 51. Show that the
+   operator, not the model, chooses where to sit on this curve.
+7. **Close on the gap.** Portscan is forecastable from this feature set; botnet is not yet. That is the
+   next piece of work, and we can say precisely why.

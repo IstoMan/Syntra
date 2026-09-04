@@ -3,7 +3,7 @@ SYNTRA - AI-Based Network Attack Forecasting Backend Application (SIH26153)
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .api import traffic, forecast, risk, explainability, alerts, model, simulation, datasets
+from .api import traffic, forecast, risk, explainability, alerts, model, simulation, datasets, replay
 from .models.world_model_service import world_model_service
 
 app = FastAPI(
@@ -30,6 +30,7 @@ app.include_router(alerts.router)
 app.include_router(model.router)
 app.include_router(simulation.router)
 app.include_router(datasets.router)
+app.include_router(replay.router)
 
 @app.get("/api/health")
 async def health_check():
