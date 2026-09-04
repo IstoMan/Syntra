@@ -1,0 +1,31 @@
+[project]
+name = "syntra"
+version = "0.1.0"
+description = "Network-state world model for SIH26153 attack forecasting"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "pyyaml>=6.0",
+  "scikit-learn>=1.5",
+  "xgboost>=2.1",
+  "shap>=0.46",
+  "torch>=2.3",
+  "joblib>=1.4",
+  "streamlit>=1.38",
+  "plotly>=5.24",
+  "pyarrow>=16.0",
+  "tqdm>=4.66",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

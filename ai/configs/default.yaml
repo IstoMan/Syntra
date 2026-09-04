@@ -1,0 +1,65 @@
+# Locked SIH26153 data and model contract.
+# Detection (current-window labels) is only allowed for baselines.
+# The world model is trained and scored on FUTURE windows t+1..t+K.
+
+dataset:
+  name: cicids2017
+  # If data/raw/cicids2017 contains official CSVs, those are used.
+  # Otherwise a CIC-IDS2017-schedule synthetic timeline is generated.
+  raw_dir: data/raw/cicids2017
+  processed_dir: data/processed
+  synthetic_dir: data/synthetic
+  # Hold-out family never used as a training target (CIC Thursday infiltration).
+  unseen_attack_family: infiltration
+
+windows:
+  size_seconds: 30
+  horizon_k: 5
+  history_len: 16
+
+splits:
+  # Time split. Real CIC: Mon benign; Tue brute-force; Wed DoS; Thu web+infiltration (val);
+  # Fri Bot, PortScan, DDoS (test). Never shuffle rows across time.
+  train_days: [monday, tuesday, wednesday]
+  val_days: [thursday]
+  test_days: [friday]
+  strategy: time  # never shuffle rows across time
+
+model:
+  type: gru_world_model
+  state_dim: 40
+  embed_dim: 128
+  hidden_dim: 128
+  num_layers: 2
+  dropout: 0.1
+  teacher_forcing: 0.25
+  # Readout heads sit on predicted states, not on the current window.
+  heads: [attack, family, stage]
+
+train:
+  batch_size: 32
+  epochs: 30
+  patience: 6
+  lr: 0.0003
+  weight_decay: 0.0001
+  seed: 42
+  rec_loss_weight: 1.0
+  rec_tf_loss_weight: 0.25
+  attack_loss_weight: 1.0
+  family_loss_weight: 0.5
+  stage_loss_weight: 0.35
+  num_workers: 0
+
+eval:
+  alert_threshold: 0.5
+  fpr_cap: 0.01
+  novelty_gate: 0.55
+  lead_time_on: future  # earliest k>=1 with P>threshold; current-window alerts do not count
+  metrics: [precision, recall, f1, fpr, lead_time, ece]
+
+explain:
+  shap_background: 128
+  top_k_features: 8
+
+ui:
+  artifacts_dir: artifacts
