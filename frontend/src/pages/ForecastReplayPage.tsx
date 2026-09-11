@@ -6,6 +6,7 @@ import {
   evaluateThreshold,
   formatClock,
   formatFeatureValue,
+  driverBarPercent,
   readWindow,
   windowSeconds,
   VERDICT_STYLE,
@@ -332,31 +333,36 @@ export const ForecastReplayPage: React.FC = () => {
             What drives the forecast
           </span>
           <div className="space-y-1.5">
-            {drivers.slice(0, 6).map((d) => {
-              const meta = featureMeta[d.feature];
-              return (
-              <div key={d.feature} className="space-y-0.5">
-                <div className="flex items-center justify-between text-[10.5px] font-mono">
-                  <span className="text-foreground truncate">{d.feature.replace(/_/g, ' ')}</span>
-                  <span className="text-muted-foreground shrink-0 ml-2">
-                    {meta
-                      ? formatFeatureValue(meta, reading.window.features[d.feature])
-                      : d.weight.toExponential(1)}
-                  </span>
-                </div>
-                <div className="h-1 bg-muted/60 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-400"
-                    style={{ width: `${(d.weight / drivers[0].weight) * 100}%` }}
-                  />
-                </div>
-              </div>
-              );
-            })}
+            {(() => {
+              const shown = drivers.slice(0, 6);
+              const maxW = shown[0]?.weight ?? 1;
+              const minW = shown[shown.length - 1]?.weight ?? maxW;
+              return shown.map((d) => {
+                const meta = featureMeta[d.feature];
+                return (
+                  <div key={d.feature} className="space-y-0.5">
+                    <div className="flex items-center justify-between text-[10.5px] font-mono">
+                      <span className="text-foreground truncate">{d.feature.replace(/_/g, ' ')}</span>
+                      <span className="text-muted-foreground shrink-0 ml-2">
+                        {meta
+                          ? formatFeatureValue(meta, reading.window.features[d.feature])
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className="h-1 bg-muted/60 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-indigo-400"
+                        style={{ width: `${driverBarPercent(d.weight, maxW, minW)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
           <p className="text-[10px] text-muted-foreground leading-snug pt-0.5">
-            Global mean |gradient| of the future-attack logit, from shap_world.json. Values shown are
-            this window's.
+            Bars are relative influence on the future-attack score (log scale). Numbers are this
+            window's raw values.
           </p>
         </Card>
       </div>

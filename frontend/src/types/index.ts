@@ -38,7 +38,7 @@ export interface ReplayWindow {
   features: Record<string, number>;
 }
 
-export type FeatureUnit = 'count' | 'bytes' | 'rate' | 'ratio';
+export type FeatureUnit = 'count' | 'bytes' | 'rate' | 'ratio' | 'us';
 
 export interface ReplayFeatureMeta {
   name: string;

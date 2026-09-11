@@ -82,7 +82,17 @@ PANEL_FEATURES: tuple[PanelFeature, ...] = (
     # No tile of their own, but the drivers list names them, so it needs their values.
     PanelFeature("unique_src_ips", "Distinct sources", "count", "", panel=False),
     PanelFeature("unique_src_ports", "Distinct src ports", "count", "", panel=False),
-    PanelFeature("mean_active", "Mean active (us)", "count", "", panel=False),
+    PanelFeature("mean_active", "Mean active (us)", "us", "", panel=False),
+    PanelFeature(
+        "std_iat",
+        "IAT std",
+        "us",
+        "Std of flow inter-arrival times, CIC microseconds.",
+        panel=False,
+    ),
+    PanelFeature("mean_iat", "Mean IAT", "us", "Mean flow inter-arrival time.", panel=False),
+    PanelFeature("std_duration", "Duration std", "us", "Std of flow duration.", panel=False),
+    PanelFeature("top_talker_share", "Top talker share", "ratio", "", panel=False),
 )
 
 

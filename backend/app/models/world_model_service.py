@@ -127,8 +127,8 @@ class WorldModelService:
         self._last_stage = None
 
     def ensure_loaded(self) -> bool:
-        if self._tried:
-            return self._runtime is not None
+        if self._runtime is not None:
+            return True
         self._tried = True
         try:
             _ensure_syntra_on_path()

@@ -187,6 +187,7 @@ function compact(value: number): string {
 
 /** Render a raw feature value in the unit it was actually measured in. */
 export function formatFeatureValue(meta: ReplayFeatureMeta, value: number): string {
+  if (!Number.isFinite(value)) return '—';
   switch (meta.unit) {
     case 'bytes': {
       const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -202,9 +203,26 @@ export function formatFeatureValue(meta: ReplayFeatureMeta, value: number): stri
       return `${compact(value)}/s`;
     case 'ratio':
       return `${(value * 100).toFixed(1)}%`;
+    case 'us': {
+      const abs = Math.abs(value);
+      if (abs >= 1e6) return `${(value / 1e6).toFixed(abs >= 1e7 ? 0 : 1)}s`;
+      if (abs >= 1e3) return `${(value / 1e3).toFixed(abs >= 1e4 ? 0 : 1)}ms`;
+      return `${Math.round(value)}µs`;
+    }
     default:
       return compact(value);
   }
+}
+
+/** Bar width for driver influence. Log scale so a 1000× outlier does not hide the rest. */
+export function driverBarPercent(weight: number, maxWeight: number, minWeight: number): number {
+  if (weight <= 0 || maxWeight <= 0) return 0;
+  const span = maxWeight / Math.max(minWeight, 1e-12);
+  if (span < 20) return (weight / maxWeight) * 100;
+  const lo = Math.log10(Math.max(minWeight, maxWeight / 1e6));
+  const hi = Math.log10(maxWeight);
+  if (hi <= lo) return 100;
+  return Math.max(6, ((Math.log10(weight) - lo) / (hi - lo)) * 100);
 }
 
 export interface BenignComparison {
